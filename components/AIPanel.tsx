@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import { Note, ChatMessage } from '../types';
 import { streamAIResponse, generateAIResponse } from '../services/gemini';
 import { GenerateContentResponse } from "@google/genai";
+import { useLanguageStore } from '../store/languageStore';
 
 interface AIPanelProps {
   activeNote: Note | null;
@@ -11,15 +12,17 @@ interface AIPanelProps {
   width?: number;
 }
 
-const ASSISTANTS = [
-  { id: 'general', name: 'General Assistant', icon: 'auto_awesome', role: 'General', desc: 'Helpful for any task' },
-  { id: 'coder', name: 'Code Architect', icon: 'code', role: 'Engineering', desc: 'Expert in software design' },
-  { id: 'writer', name: 'Copy Editor', icon: 'edit_note', role: 'Marketing', desc: 'Refines tone & grammar' },
-  { id: 'data', name: 'Data Analyst', icon: 'analytics', role: 'Business', desc: 'Insights from data' },
-  { id: 'pm', name: 'Product Lead', icon: 'rocket_launch', role: 'Product', desc: 'Strategy & prioritization' },
-];
-
 const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
+  const { t } = useLanguageStore();
+
+  const ASSISTANTS = [
+    { id: 'general', name: t.aiPanel.assistants.general, icon: 'auto_awesome', role: 'General', desc: 'Helpful for any task' },
+    { id: 'coder', name: t.aiPanel.assistants.coder, icon: 'code', role: 'Engineering', desc: 'Expert in software design' },
+    { id: 'writer', name: t.aiPanel.assistants.writer, icon: 'edit_note', role: 'Marketing', desc: 'Refines tone & grammar' },
+    { id: 'data', name: t.aiPanel.assistants.data, icon: 'analytics', role: 'Business', desc: 'Insights from data' },
+    { id: 'pm', name: t.aiPanel.assistants.pm, icon: 'rocket_launch', role: 'Product', desc: 'Strategy & prioritization' },
+  ];
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'model', text: "Hello! I've analyzed your current note. How can I help you today?", type: 'text' }
   ]);
@@ -47,6 +50,16 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Update assistant list when language changes
+  useEffect(() => {
+      // Logic to keep the selected assistant but update the name if possible, 
+      // or just reset to first one if complex. Simplified here:
+      setCurrentAssistant(prev => {
+        const found = ASSISTANTS.find(a => a.id === prev.id);
+        return found || ASSISTANTS[0];
+      });
+  }, [t]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -251,7 +264,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
                 <span className="material-symbols-outlined text-sm">{currentAssistant.icon}</span>
               </div>
               <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-xl rounded-tl-none text-sm animate-pulse text-gray-500">
-                Thinking...
+                {t.aiPanel.thinking}
               </div>
           </div>
         )}
@@ -262,7 +275,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
           <textarea 
             ref={textareaRef}
             className="w-full bg-gray-100 dark:bg-gray-800 border-none rounded-xl text-sm p-3 pr-10 resize-none focus:ring-1 focus:ring-primary overflow-hidden min-h-[44px]" 
-            placeholder={`Ask ${currentAssistant.name}...`}
+            placeholder={`${t.aiPanel.askPlaceholder} ${currentAssistant.name}...`}
             value={input}
             rows={1}
             onChange={(e) => setInput(e.target.value)}
@@ -278,7 +291,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
             <button 
               onClick={handleStop}
               className="absolute bottom-2.5 right-2 size-8 bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg flex items-center justify-center hover:bg-red-100 hover:text-red-500 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors"
-              title="Stop generation"
+              title={t.aiPanel.stop}
             >
               <span className="material-symbols-outlined text-lg">stop_circle</span>
             </button>
@@ -292,7 +305,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
             </button>
           )}
         </div>
-        <p className="text-[10px] text-gray-400 mt-2 text-center">AI can make mistakes. Always check important info.</p>
+        <p className="text-[10px] text-gray-400 mt-2 text-center">{t.aiPanel.disclaimer}</p>
       </div>
     </aside>
   );

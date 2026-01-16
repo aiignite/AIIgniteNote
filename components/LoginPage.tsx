@@ -1,6 +1,7 @@
 
 import React, { useState, useId } from 'react';
 import { useThemeStore } from '../store/themeStore';
+import { useLanguageStore } from '../store/languageStore';
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -13,6 +14,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const baseId = useId(); 
   const { getTheme } = useThemeStore();
   const theme = getTheme();
+  const { t } = useLanguageStore();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,13 +94,13 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                 <circle cx="100.5" cy="138" r="3" fill="white" />
               </svg>
             </div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mt-6">Welcome Back</h1>
-            <p className="text-sm text-gray-500 mt-2">Sign in to your intelligent workspace</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mt-6">{t.login.welcome}</h1>
+            <p className="text-sm text-gray-500 mt-2">{t.login.subtitle}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Email</label>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.login.emailLabel}</label>
               <input 
                 type="email" 
                 required
@@ -110,7 +112,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Password</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.login.passwordLabel}</label>
                 <a href="#" className="text-xs text-primary font-bold hover:underline">Forgot?</a>
               </div>
               <input 
@@ -131,17 +133,17 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
               {isLoading ? (
                 <>
                   <span className="size-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  Signing in...
+                  {t.login.signingIn}
                 </>
               ) : (
-                'Sign In'
+                t.login.signInBtn
               )}
             </button>
           </form>
 
           <div className="mt-8 text-center border-t border-gray-100 dark:border-gray-800 pt-6">
             <p className="text-xs text-gray-500">
-              New here? <a href="#" className="text-primary font-bold hover:underline">Create an account</a>
+              {t.login.newHere} <a href="#" className="text-primary font-bold hover:underline">{t.login.createAccount}</a>
             </p>
           </div>
         </div>

@@ -5,6 +5,7 @@ import MarkdownEditor from './editors/MarkdownEditor';
 import RichTextEditor from './editors/RichTextEditor';
 import MindMapEditor from './editors/MindMapEditor';
 import DrawioEditor from './editors/DrawioEditor';
+import { useLanguageStore } from '../store/languageStore';
 
 interface EditorProps {
   note: Note | null;
@@ -14,6 +15,7 @@ interface EditorProps {
 const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
   const [activeMode, setActiveMode] = useState<NoteType>('Markdown');
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const { t } = useLanguageStore();
 
   // Tag Menu State
   const [showTagMenu, setShowTagMenu] = useState(false);
@@ -68,8 +70,8 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
         <div className="size-24 rounded-full bg-gray-50 dark:bg-gray-800 flex items-center justify-center mb-6">
           <span className="material-symbols-outlined text-4xl text-gray-300 dark:text-gray-600">edit_document</span>
         </div>
-        <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">No Note Selected</h3>
-        <p className="text-sm mt-2">Select a note from the sidebar or create a new one.</p>
+        <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t.editor.noNoteSelected}</h3>
+        <p className="text-sm mt-2">{t.editor.noNoteDesc}</p>
       </div>
     );
   }
@@ -145,7 +147,7 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
               className="w-full max-w-md text-xl font-bold bg-transparent border-none focus:ring-0 text-gray-900 dark:text-white p-0 placeholder-gray-300 truncate"
               value={note.title}
               onChange={handleTitleChange}
-              placeholder="Untitled Note"
+              placeholder={t.editor.untitled}
             />
           </div>
         </div>
@@ -170,7 +172,7 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
               className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-gray-500 hover:text-primary hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
             >
                <span className="material-symbols-outlined text-sm">label</span>
-               <span className="hidden sm:inline">Add Tag</span>
+               <span className="hidden sm:inline">{t.editor.addTag}</span>
             </button>
 
             {showTagMenu && (
@@ -190,7 +192,7 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
                 />
                 
                 <div className="max-h-48 overflow-y-auto scrollbar-hide">
-                   <p className="text-[9px] font-bold text-gray-400 uppercase px-2 mb-1.5 mt-1">Suggested</p>
+                   <p className="text-[9px] font-bold text-gray-400 uppercase px-2 mb-1.5 mt-1">{t.editor.suggested}</p>
                    <div className="space-y-0.5">
                      {suggestedTags.map(t => (
                        <button
@@ -215,7 +217,7 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
           <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1"></div>
           
           <span className="text-xs text-gray-400 whitespace-nowrap min-w-[60px] text-right">
-             {note.content.length} chars
+             {note.content.length} {t.editor.chars}
           </span>
           
           <button className="text-gray-400 hover:text-primary transition-colors p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800">

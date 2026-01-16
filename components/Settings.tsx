@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { AppUser, SettingsTab } from '../types';
 import { useThemeStore, ThemeColor } from '../store/themeStore';
+import { useLanguageStore } from '../store/languageStore';
 
 const MOCK_USERS: AppUser[] = [
   { id: '1', name: 'Alex Johnson', email: 'alex@example.com', role: 'Owner', status: 'Active', avatar: 'https://picsum.photos/seed/alex/100/100' },
@@ -17,6 +18,7 @@ interface SettingsProps {
 const Settings: React.FC<SettingsProps> = ({ initialTab = 'General' }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const { primaryColor, setPrimaryColor } = useThemeStore();
+  const { language, setLanguage, t } = useLanguageStore();
 
   const colorOptions: { id: ThemeColor; bgClass: string }[] = [
     { id: 'orange', bgClass: 'bg-orange-600' },
@@ -173,26 +175,60 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General' }) => {
         return (
           <div className="space-y-12 animate-in fade-in duration-300">
             <section>
-              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 mb-6 border-b border-gray-100 dark:border-gray-800 pb-2">Appearance</h3>
+              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 mb-6 border-b border-gray-100 dark:border-gray-800 pb-2">{t.settings.appearance}</h3>
               <div className="space-y-6">
+                
+                {/* Language Switcher */}
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium">Interface Theme</p>
-                    <p className="text-xs text-gray-500">Choose your preferred visual mode</p>
+                    <p className="font-medium">{t.settings.language}</p>
+                    <p className="text-xs text-gray-500">{t.settings.languageDesc}</p>
                   </div>
                   <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
-                    <button className="px-4 py-1.5 text-xs font-medium bg-white dark:bg-gray-700 shadow-sm rounded-md flex items-center gap-2">
-                      <span className="material-symbols-outlined text-sm">light_mode</span> Light
+                    <button 
+                      onClick={() => setLanguage('en')}
+                      className={`px-4 py-1.5 text-xs font-medium rounded-md flex items-center gap-2 transition-all ${
+                        language === 'en' 
+                          ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' 
+                          : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                      }`}
+                    >
+                      English
                     </button>
-                    <button className="px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-sm">dark_mode</span> Dark
+                    <button 
+                      onClick={() => setLanguage('zh')}
+                      className={`px-4 py-1.5 text-xs font-medium rounded-md flex items-center gap-2 transition-all ${
+                        language === 'zh' 
+                          ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' 
+                          : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                      }`}
+                    >
+                      中文
                     </button>
                   </div>
                 </div>
+
+                {/* Theme Switcher */}
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium">Primary Accent Color</p>
-                    <p className="text-xs text-gray-500">Change the primary color of the interface</p>
+                    <p className="font-medium">{t.settings.interfaceTheme}</p>
+                    <p className="text-xs text-gray-500">{t.settings.interfaceThemeDesc}</p>
+                  </div>
+                  <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+                    <button className="px-4 py-1.5 text-xs font-medium bg-white dark:bg-gray-700 shadow-sm rounded-md flex items-center gap-2">
+                      <span className="material-symbols-outlined text-sm">light_mode</span> {t.settings.light}
+                    </button>
+                    <button className="px-4 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-sm">dark_mode</span> {t.settings.dark}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Color Switcher */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{t.settings.primaryColor}</p>
+                    <p className="text-xs text-gray-500">{t.settings.primaryColorDesc}</p>
                   </div>
                   <div className="flex gap-3">
                     {colorOptions.map((option) => (
@@ -219,17 +255,17 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General' }) => {
   };
 
   const menuItems: { id: SettingsTab; icon: string; label: string }[] = [
-    { id: 'General', icon: 'tune', label: 'General' },
-    { id: 'Profile', icon: 'account_circle', label: 'User Profile' },
-    { id: 'Users', icon: 'group', label: 'Team Management' },
+    { id: 'General', icon: 'tune', label: t.settings.tabs.general },
+    { id: 'Profile', icon: 'account_circle', label: t.settings.tabs.profile },
+    { id: 'Users', icon: 'group', label: t.settings.tabs.team },
   ];
 
   return (
     <div className="flex-1 flex overflow-hidden">
       <aside className="w-64 flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-background-dark shrink-0">
         <div className="p-6 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-xl font-bold">Settings</h2>
-          <p className="text-xs text-gray-500 mt-1">Manage your account and preferences</p>
+          <h2 className="text-xl font-bold">{t.settings.title}</h2>
+          <p className="text-xs text-gray-500 mt-1">{t.settings.subtitle}</p>
         </div>
         <nav className="flex-1 overflow-y-auto p-4 space-y-1 scrollbar-hide">
           {menuItems.map(item => (
@@ -253,8 +289,8 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General' }) => {
           {renderTabContent()}
           
           <div className="flex justify-end gap-3 pt-12 mt-12 border-t border-gray-100 dark:border-gray-800">
-            <button className="px-6 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">Discard</button>
-            <button className="px-6 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary/90 transition-all shadow-lg shadow-primary/20">Save Changes</button>
+            <button className="px-6 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">{t.settings.discard}</button>
+            <button className="px-6 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary/90 transition-all shadow-lg shadow-primary/20">{t.settings.save}</button>
           </div>
         </div>
       </main>

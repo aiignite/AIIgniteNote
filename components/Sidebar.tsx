@@ -2,6 +2,7 @@
 import React, { useState, useId } from 'react';
 import { ViewState } from '../types';
 import { useThemeStore } from '../store/themeStore';
+import { useLanguageStore } from '../store/languageStore';
 
 interface SidebarProps {
   currentView: ViewState;
@@ -14,15 +15,16 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout }
   const baseId = useId(); 
   const { getTheme } = useThemeStore();
   const theme = getTheme();
+  const { t } = useLanguageStore();
 
   const navItems: { id: ViewState; icon: string; label: string; activeColor?: string }[] = [
-    { id: 'editor', icon: 'edit_note', label: 'Documents', activeColor: 'bg-primary' },
-    { id: 'templates', icon: 'extension', label: 'Templates' },
-    { id: 'search', icon: 'search', label: 'Search' },
-    { id: 'ai-dashboard', icon: 'auto_awesome', label: 'AI Dashboard' },
-    { id: 'favorites', icon: 'star', label: 'Favorites' },
-    { id: 'tags', icon: 'label', label: 'Tags' },
-    { id: 'trash', icon: 'delete', label: 'Trash' },
+    { id: 'editor', icon: 'edit_note', label: t.sidebar.documents, activeColor: 'bg-primary' },
+    { id: 'templates', icon: 'extension', label: t.sidebar.templates },
+    { id: 'search', icon: 'search', label: t.sidebar.search },
+    { id: 'ai-dashboard', icon: 'auto_awesome', label: t.sidebar.aiDashboard },
+    { id: 'favorites', icon: 'star', label: t.sidebar.favorites },
+    { id: 'tags', icon: 'label', label: t.sidebar.tags },
+    { id: 'trash', icon: 'delete', label: t.sidebar.trash },
   ];
 
   return (
@@ -109,6 +111,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout }
         <button 
           onClick={() => onViewChange('settings')}
           className={`p-2 rounded-lg transition-colors ${currentView === 'settings' ? 'text-primary bg-primary/10' : 'text-gray-400 hover:text-primary'}`}
+          title={t.sidebar.settings}
         >
           <span className="material-symbols-outlined">settings</span>
         </button>
@@ -145,13 +148,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout }
                   onClick={() => { onViewChange('settings'); setShowQuickProfile(false); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors"
                 >
-                  <span className="material-symbols-outlined text-sm">person</span> View Profile
+                  <span className="material-symbols-outlined text-sm">person</span> {t.sidebar.viewProfile}
                 </button>
                 <button 
                   onClick={onLogout}
                   className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors text-red-500"
                 >
-                  <span className="material-symbols-outlined text-sm">logout</span> Sign Out
+                  <span className="material-symbols-outlined text-sm">logout</span> {t.sidebar.signOut}
                 </button>
               </div>
             </div>

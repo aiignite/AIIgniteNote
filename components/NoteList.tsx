@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Note, NoteType } from '../types';
+import { useLanguageStore } from '../store/languageStore';
 
 interface NoteListProps {
   notes: Note[];
@@ -34,6 +35,8 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
   const [sortMode, setSortMode] = useState<SortMode>('updatedAt');
   const [showSortMenu, setShowSortMenu] = useState(false);
   
+  const { t } = useLanguageStore();
+
   // Folder State
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
 
@@ -99,9 +102,9 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
         setModalConfig({
           isOpen: true,
           type: 'confirm',
-          title: 'Delete Note',
-          message: 'Are you sure you want to delete this note? This action cannot be undone.',
-          confirmLabel: 'Delete',
+          title: t.noteList.deleteTitle,
+          message: t.noteList.deleteMessage,
+          confirmLabel: t.noteList.confirmDelete,
           confirmColor: 'bg-red-500 hover:bg-red-600',
           onConfirm: () => onDeleteNote(note.id)
         });
@@ -111,10 +114,10 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
         setModalConfig({
           isOpen: true,
           type: 'input',
-          title: 'Add Tag',
-          placeholder: 'e.g. Important, Work',
+          title: t.noteList.tagTitle,
+          placeholder: t.noteList.tagPlaceholder,
           initialValue: '',
-          confirmLabel: 'Add Tag',
+          confirmLabel: t.noteList.tagBtn,
           onConfirm: (val) => {
              if (val.trim()) onUpdateNote({ ...note, tags: [...note.tags, val.trim()] });
           }
@@ -125,10 +128,10 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
         setModalConfig({
           isOpen: true,
           type: 'input',
-          title: 'Move to Folder',
-          placeholder: 'Folder Name',
+          title: t.noteList.moveTitle,
+          placeholder: t.noteList.movePlaceholder,
           initialValue: note.folder || '',
-          confirmLabel: 'Move',
+          confirmLabel: t.noteList.moveBtn,
           onConfirm: (val) => {
              // Allow empty string to move to root/General
              onUpdateNote({ ...note, folder: val.trim() });
@@ -183,9 +186,9 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
 
   const getSortLabel = () => {
     switch(sortMode) {
-      case 'createdAt': return 'Created';
-      case 'title': return 'Name';
-      default: return 'Modified';
+      case 'createdAt': return t.noteList.sortCreated;
+      case 'title': return t.noteList.sortName;
+      default: return t.noteList.sortModified;
     }
   };
 
@@ -200,10 +203,10 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
     setModalConfig({
         isOpen: true,
         type: 'input',
-        title: 'New Folder',
-        placeholder: 'Enter folder name',
+        title: t.noteList.folderInputTitle,
+        placeholder: t.noteList.folderInputPlaceholder,
         initialValue: '',
-        confirmLabel: 'Create',
+        confirmLabel: t.noteList.create,
         onConfirm: (folderName) => {
             if (folderName && folderName.trim()) {
                 const newFolderPath = currentFolder 
@@ -251,7 +254,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
               <div className="absolute top-full right-0 pt-2 w-48 z-50 animate-in fade-in zoom-in-95 duration-200">
                 <div className="bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden p-2">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-2 mb-1">
-                    Add to {currentFolder || 'Root'}
+                    {t.noteList.addTo} {currentFolder || 'Root'}
                   </p>
                   {noteTypes.map((item) => (
                     <button
@@ -271,7 +274,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
                     className="w-full flex items-center gap-3 px-2 py-2 text-sm rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-left"
                   >
                     <span className="material-symbols-outlined text-lg text-amber-500">create_new_folder</span>
-                    <span>New Folder</span>
+                    <span>{t.noteList.newFolder}</span>
                   </button>
 
                 </div>
@@ -287,7 +290,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
             </div>
             <input 
               className="block w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#1c2b33] border-none rounded-lg text-sm placeholder-gray-400 focus:ring-1 focus:ring-primary transition-shadow" 
-              placeholder="Search..." 
+              placeholder={t.noteList.searchPlaceholder}
               type="text"
             />
           </div>
@@ -305,9 +308,9 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
                {showSortMenu && (
                   <div className="absolute top-full right-0 mt-2 w-32 bg-white dark:bg-[#1c2b33] rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden">
                     {[
-                      { id: 'updatedAt', label: 'Modified' },
-                      { id: 'createdAt', label: 'Created' },
-                      { id: 'title', label: 'Name' }
+                      { id: 'updatedAt', label: t.noteList.sortModified },
+                      { id: 'createdAt', label: t.noteList.sortCreated },
+                      { id: 'title', label: t.noteList.sortName }
                     ].map((option) => (
                       <button
                         key={option.id}
@@ -357,7 +360,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
         {displayItems.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-gray-400">
              <span className="material-symbols-outlined text-4xl mb-2 opacity-50">folder_open</span>
-             <p className="text-xs">Empty Folder</p>
+             <p className="text-xs">{t.noteList.emptyFolder}</p>
           </div>
         )}
         
@@ -415,14 +418,14 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
                 {activeMenuId === note.id && (
                     <div ref={menuRef} className="absolute right-2 top-8 w-36 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
                         <button onClick={(e) => handleMenuAction(e, 'tags', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                          <span className="material-symbols-outlined text-sm">label</span> Tags...
+                          <span className="material-symbols-outlined text-sm">label</span> {t.noteList.tagBtn}...
                         </button>
                         <button onClick={(e) => handleMenuAction(e, 'folder', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                          <span className="material-symbols-outlined text-sm">folder</span> Move to...
+                          <span className="material-symbols-outlined text-sm">folder</span> {t.noteList.moveBtn}...
                         </button>
                         <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
                         <button onClick={(e) => handleMenuAction(e, 'delete', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 flex items-center gap-2">
-                          <span className="material-symbols-outlined text-sm">delete</span> Delete
+                          <span className="material-symbols-outlined text-sm">delete</span> {t.noteList.confirmDelete}
                         </button>
                     </div>
                 )}
@@ -509,9 +512,9 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
         })}
       </div>
       <div className="p-3 border-t border-gray-200 dark:border-gray-800 flex justify-between items-center text-[10px] text-gray-400">
-        <span>{displayItems.length} items</span>
+        <span>{displayItems.length} {t.noteList.items}</span>
         <span className="flex items-center gap-1">
-          <span className="size-1.5 bg-green-500 rounded-full animate-pulse"></span> Cloud Synced
+          <span className="size-1.5 bg-green-500 rounded-full animate-pulse"></span> {t.noteList.cloudSynced}
         </span>
       </div>
 
@@ -541,13 +544,13 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
                   onClick={closeModal}
                   className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
                 >
-                  Cancel
+                  {t.noteList.cancel}
                 </button>
                 <button 
                   onClick={() => handleModalSubmit()}
                   className={`px-3 py-1.5 text-xs font-bold text-white rounded-lg shadow-sm transition-all ${modalConfig.confirmColor || 'bg-primary hover:bg-primary/90'}`}
                 >
-                  {modalConfig.confirmLabel || 'Confirm'}
+                  {modalConfig.confirmLabel || t.noteList.create}
                 </button>
               </div>
             </div>
