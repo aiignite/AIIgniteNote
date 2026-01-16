@@ -1,0 +1,7 @@
+{
+  "name": "AIIgniteNote",
+  "description": "A high-performance, AI-integrated note-taking application featuring markdown editing, diagramming, and intelligent assistance.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
