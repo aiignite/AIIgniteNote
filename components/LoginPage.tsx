@@ -1,5 +1,6 @@
 
 import React, { useState, useId } from 'react';
+import { useThemeStore } from '../store/themeStore';
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -9,7 +10,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const baseId = useId(); // Unique ID for SVG definitions
+  const baseId = useId(); 
+  const { getTheme } = useThemeStore();
+  const theme = getTheme();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,21 +26,21 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-[#fff7ed] dark:bg-[#0c1419] relative overflow-hidden font-display">
-      {/* Brand Background Elements - Updated to match new logo gradient start (#EA580C) */}
-      <div className="absolute top-0 left-0 w-full h-[50vh] bg-[#EA580C] z-0"></div>
-      <div className="absolute top-[30%] left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-[#F97316]/20 rounded-full blur-[100px] pointer-events-none z-0"></div>
+      {/* Brand Background Elements - Dynamic Theme */}
+      <div className="absolute top-0 left-0 w-full h-[50vh] bg-primary z-0 transition-colors duration-500"></div>
+      <div className="absolute top-[30%] left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-white/10 rounded-full blur-[100px] pointer-events-none z-0"></div>
 
       <div className="w-full max-w-md p-8 relative z-10 mt-16">
         <div className="bg-white dark:bg-[#15232a] border border-gray-100 dark:border-gray-800 rounded-3xl shadow-2xl p-10">
           
           {/* Logo Section - New Design */}
           <div className="flex flex-col items-center -mt-20 mb-8">
-             <div className="size-24 rounded-3xl overflow-hidden shadow-2xl shadow-orange-900/30 transform hover:scale-105 transition-transform duration-500">
+             <div className="size-24 rounded-3xl overflow-hidden shadow-2xl shadow-gray-900/20 transform hover:scale-105 transition-transform duration-500">
                <svg viewBox="0 0 200 200" className="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <defs>
                   <linearGradient id={`${baseId}-bg-gradient`} x1="0" y1="0" x2="200" y2="200" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#F97316"/>
-                    <stop offset="100%" stopColor="#EA580C"/>
+                    <stop offset="0%" stopColor={theme.gradientStart}/>
+                    <stop offset="100%" stopColor={theme.gradientEnd}/>
                   </linearGradient>
                   
                   <radialGradient id={`${baseId}-halo-gradient`} cx="100" cy="110" r="60" gradientUnits="userSpaceOnUse">
@@ -81,10 +84,10 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                       mask={`url(#${baseId}-modern-fire-mask)`} />
 
                 <path d="M70 160 C 90 165, 110 165, 130 160" 
-                      stroke="#FFEDD5" 
+                      stroke="white" 
                       strokeWidth="2" 
                       strokeLinecap="round" 
-                      opacity="0.6" />
+                      opacity="0.4" />
                 
                 <circle cx="100.5" cy="138" r="3" fill="white" />
               </svg>
@@ -101,21 +104,21 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-[#EA580C]/20 focus:border-[#EA580C] outline-none transition-all text-sm"
+                className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm"
                 placeholder="name@company.com"
               />
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Password</label>
-                <a href="#" className="text-xs text-[#EA580C] font-bold hover:underline">Forgot?</a>
+                <a href="#" className="text-xs text-primary font-bold hover:underline">Forgot?</a>
               </div>
               <input 
                 type="password" 
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-[#EA580C]/20 focus:border-[#EA580C] outline-none transition-all text-sm"
+                className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm"
                 placeholder="••••••••"
               />
             </div>
@@ -123,7 +126,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
             <button 
               type="submit" 
               disabled={isLoading}
-              className="w-full py-3.5 bg-[#EA580C] text-white rounded-xl font-bold text-sm shadow-xl shadow-orange-900/20 hover:bg-[#C2410C] hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              className="w-full py-3.5 bg-primary text-white rounded-xl font-bold text-sm shadow-xl shadow-primary/20 hover:opacity-90 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {isLoading ? (
                 <>
@@ -138,7 +141,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
 
           <div className="mt-8 text-center border-t border-gray-100 dark:border-gray-800 pt-6">
             <p className="text-xs text-gray-500">
-              New here? <a href="#" className="text-[#EA580C] font-bold hover:underline">Create an account</a>
+              New here? <a href="#" className="text-primary font-bold hover:underline">Create an account</a>
             </p>
           </div>
         </div>

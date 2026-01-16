@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { AppUser, SettingsTab } from '../types';
+import { useThemeStore, ThemeColor } from '../store/themeStore';
 
 const MOCK_USERS: AppUser[] = [
   { id: '1', name: 'Alex Johnson', email: 'alex@example.com', role: 'Owner', status: 'Active', avatar: 'https://picsum.photos/seed/alex/100/100' },
@@ -15,6 +16,14 @@ interface SettingsProps {
 
 const Settings: React.FC<SettingsProps> = ({ initialTab = 'General' }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  const { primaryColor, setPrimaryColor } = useThemeStore();
+
+  const colorOptions: { id: ThemeColor; bgClass: string }[] = [
+    { id: 'orange', bgClass: 'bg-orange-600' },
+    { id: 'purple', bgClass: 'bg-violet-500' },
+    { id: 'green', bgClass: 'bg-emerald-500' },
+    { id: 'blue', bgClass: 'bg-blue-500' },
+  ];
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -85,81 +94,76 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General' }) => {
         );
       case 'Profile':
         return (
-          <div className="space-y-8 animate-in fade-in duration-300">
-            <h2 className="text-2xl font-bold">User Profile</h2>
-            <div className="flex items-start gap-8">
-              <div className="relative group">
-                <img src="https://picsum.photos/seed/user/200/200" className="size-32 rounded-3xl object-cover border-4 border-white dark:border-gray-800 shadow-xl" />
-                <button className="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center">
+          <div className="space-y-10 animate-in fade-in duration-300">
+            <div>
+              <h2 className="text-2xl font-bold">User Profile</h2>
+              <p className="text-sm text-gray-500 mt-1">Manage your personal information and account security</p>
+            </div>
+            
+            {/* Personal Info Section */}
+            <div className="flex flex-col md:flex-row gap-8 items-start">
+              <div className="relative group shrink-0 mx-auto md:mx-0">
+                <img src="https://picsum.photos/seed/user/200/200" className="size-32 rounded-3xl object-cover border-4 border-white dark:border-gray-800 shadow-xl" alt="Profile" />
+                <button className="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center backdrop-blur-sm">
                   <span className="material-symbols-outlined">photo_camera</span>
                 </button>
               </div>
-              <div className="flex-1 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
+              
+              <div className="flex-1 w-full space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Full Name</label>
-                    <input type="text" defaultValue="Alex Johnson" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2 text-sm focus:ring-1 focus:ring-primary" />
+                    <input type="text" defaultValue="Alex Johnson" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Email Address</label>
-                    <input type="email" defaultValue="alex@example.com" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2 text-sm focus:ring-1 focus:ring-primary" />
+                    <input type="email" defaultValue="alex@example.com" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
                   </div>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Biography</label>
-                  <textarea rows={3} defaultValue="Senior Product Designer and tech enthusiast." className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2 text-sm focus:ring-1 focus:ring-primary resize-none" />
+                  <textarea rows={3} defaultValue="Senior Product Designer and tech enthusiast." className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary resize-none transition-all" />
                 </div>
               </div>
             </div>
-          </div>
-        );
-      case 'Security':
-        return (
-          <div className="space-y-8 animate-in fade-in duration-300">
-            <h2 className="text-2xl font-bold">Security & Access</h2>
+
+            <div className="border-t border-gray-100 dark:border-gray-800"></div>
+
+            {/* Security Section (Merged) */}
             <div className="space-y-6">
-              <div className="p-6 bg-gray-50 dark:bg-gray-800/50 rounded-2xl flex items-center justify-between border border-gray-100 dark:border-gray-800">
-                <div>
-                  <h4 className="font-bold">Two-Factor Authentication</h4>
-                  <p className="text-xs text-gray-500">Add an extra layer of security to your account.</p>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Password & Security</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-1.5">
+                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Current Password</label>
+                   <input type="password" placeholder="••••••••" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
                 </div>
-                <button className="size-12 rounded-full bg-gray-200 dark:bg-gray-700 relative flex items-center px-1 transition-colors">
-                  <div className="size-5 bg-white rounded-full shadow-md"></div>
+                <div className="hidden md:block"></div> {/* Spacer */}
+
+                <div className="space-y-1.5">
+                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">New Password</label>
+                   <input type="password" placeholder="Enter new password" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
+                </div>
+                <div className="space-y-1.5">
+                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Confirm New Password</label>
+                   <input type="password" placeholder="Confirm new password" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
+                </div>
+              </div>
+
+              <div className="p-5 bg-gray-50 dark:bg-gray-800/50 rounded-2xl flex items-center justify-between border border-gray-100 dark:border-gray-800 mt-6">
+                <div>
+                  <h4 className="font-bold text-sm">Two-Factor Authentication</h4>
+                  <p className="text-xs text-gray-500 mt-0.5">Secure your account with 2FA via SMS or Authenticator App.</p>
+                </div>
+                <button className="relative w-12 h-6 rounded-full bg-gray-300 dark:bg-gray-700 transition-colors focus:outline-none">
+                  <div className="absolute left-1 top-1 size-4 bg-white rounded-full shadow-sm transition-transform"></div>
                 </button>
               </div>
-              <div className="space-y-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-gray-400">Change Password</h4>
-                <div className="grid gap-4">
-                  <input type="password" placeholder="Current Password" className="bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2 text-sm focus:ring-1 focus:ring-primary" />
-                  <input type="password" placeholder="New Password" className="bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2 text-sm focus:ring-1 focus:ring-primary" />
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      case 'AI':
-        return (
-          <div className="space-y-8 animate-in fade-in duration-300">
-            <h2 className="text-2xl font-bold">AI Configuration</h2>
-            <div className="grid gap-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Active Model</label>
-                <select className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-3 text-sm focus:ring-1 focus:ring-primary">
-                  <option>Gemini 3 Pro (High Quality)</option>
-                  <option>Gemini 3 Flash (Fastest)</option>
-                  <option>Gemini 2.5 Pro (Balanced)</option>
-                </select>
-              </div>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Creativity (Temperature)</label>
-                  <span className="text-xs font-bold text-primary">0.7</span>
-                </div>
-                <input type="range" className="w-full accent-primary" />
-                <div className="flex justify-between text-[10px] text-gray-400">
-                  <span>Precise</span>
-                  <span>Creative</span>
-                </div>
+
+              <div className="flex justify-start pt-2">
+                 <button className="text-xs font-bold text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 px-4 py-2 rounded-lg transition-colors flex items-center gap-2">
+                    <span className="material-symbols-outlined text-sm">logout</span> Log out of all devices
+                 </button>
               </div>
             </div>
           </div>
@@ -190,10 +194,21 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General' }) => {
                     <p className="font-medium">Primary Accent Color</p>
                     <p className="text-xs text-gray-500">Change the primary color of the interface</p>
                   </div>
-                  <div className="flex gap-2">
-                    <button className="size-6 rounded-full bg-primary ring-2 ring-offset-2 ring-primary"></button>
-                    <button className="size-6 rounded-full bg-purple-500"></button>
-                    <button className="size-6 rounded-full bg-emerald-500"></button>
+                  <div className="flex gap-3">
+                    {colorOptions.map((option) => (
+                      <button 
+                        key={option.id}
+                        onClick={() => setPrimaryColor(option.id)}
+                        className={`size-8 rounded-full ${option.bgClass} transition-all hover:scale-110 flex items-center justify-center ${
+                          primaryColor === option.id 
+                            ? 'ring-2 ring-offset-2 ring-gray-400 dark:ring-gray-600 scale-110' 
+                            : ''
+                        }`}
+                        title={option.id.charAt(0).toUpperCase() + option.id.slice(1)}
+                      >
+                         {primaryColor === option.id && <span className="material-symbols-outlined text-white text-base">check</span>}
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -207,8 +222,6 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General' }) => {
     { id: 'General', icon: 'tune', label: 'General' },
     { id: 'Profile', icon: 'account_circle', label: 'User Profile' },
     { id: 'Users', icon: 'group', label: 'Team Management' },
-    { id: 'Security', icon: 'security', label: 'Security' },
-    { id: 'AI', icon: 'auto_awesome', label: 'AI Configuration' },
   ];
 
   return (

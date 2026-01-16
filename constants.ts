@@ -4,39 +4,69 @@ import { Note } from './types';
 export const INITIAL_NOTES: Note[] = [
   {
     id: '1',
-    title: 'Product Roadmap 2024',
+    title: 'System Design Completed',
     type: 'Markdown',
-    content: `# Product Roadmap 2024\n\nThe 2024 roadmap focuses on **AI-driven productivity** and **seamless collaboration** across platforms.\n\n## Q1 Focus: Intelligence\n\n* Integrate GPT-4 Turbo for complex summarizing tasks.\n* Real-time voice-to-text transcription with speaker identification.\n* Semantic search across all notebook types.\n\n> "Our goal is to reduce the friction between thinking and documenting by 50% this year."\n> — Head of Product`,
-    updatedAt: '2m ago',
-    folder: 'Work',
-    tags: ['roadmap', 'q1-2024', 'strategic']
+    content: '# System Design\n\nArchitecture approved. Moving to implementation phase.',
+    updatedAt: '2024.01.19',
+    createdAt: '2024.01.19',
+    timestamp: 1705622400000,
+    folder: 'System Design',
+    tags: ['design', 'architecture']
   },
   {
     id: '2',
-    title: 'Weekly Sync Meeting Notes',
-    type: 'Rich Text',
-    content: 'Review of last week\'s performance metrics and individual team updates regarding the Q3 launch. We discussed resource allocation and potential bottlenecks in the API migration.',
-    updatedAt: '1h ago',
-    folder: 'Work',
-    tags: ['meeting', 'sync']
+    title: 'Code Application Logic',
+    type: 'Markdown',
+    content: 'Main loop implementation details...',
+    updatedAt: '2023.12.12',
+    createdAt: '2023.12.12',
+    timestamp: 1702339200000,
+    folder: 'Code App',
+    tags: ['dev']
   },
   {
     id: '3',
-    title: 'Campaign Strategy: Blue Horizon',
-    type: 'Mind Map',
-    content: 'Brainstorming session for the summer marketing campaign including social media and email strategy. Key themes: Sustainability, Community, Innovation.',
-    updatedAt: '3h ago',
-    folder: 'Marketing',
-    tags: ['campaign', 'design']
+    title: 'Deployment Issues Log',
+    type: 'Rich Text',
+    content: 'Server timeout on port 8080 during load testing.',
+    updatedAt: '2023.12.11',
+    createdAt: '2023.12.11',
+    timestamp: 1702252800000,
+    folder: 'Deployment',
+    tags: ['bugs', 'devops']
   },
   {
     id: '4',
-    title: 'Code Snippets - React Hooks',
+    title: 'Legacy System Archive',
     type: 'Markdown',
-    content: 'Collection of useful custom hooks for state management and side effects in enterprise apps. Includes useLocalStorage, useDebounce, and useThrottle.',
-    updatedAt: 'Yesterday',
-    folder: 'Development',
-    tags: ['react', 'hooks']
+    content: 'Notes on the V1 migration path.',
+    updatedAt: '2021.05.27',
+    createdAt: '2021.05.27',
+    timestamp: 1622073600000,
+    folder: 'History',
+    tags: ['archive']
+  },
+  {
+    id: '5',
+    title: 'PLMS History Data',
+    type: 'Markdown',
+    content: 'Development tasks, deployment tasks, non-productive material procurement, process design 2024/11/16...',
+    updatedAt: '2024.11.21',
+    createdAt: '2024.11.21',
+    timestamp: 1732147200000,
+    folder: 'History',
+    tags: ['data']
+  },
+  {
+    id: '6',
+    title: 'Frontend Refactor',
+    type: 'Markdown',
+    content: 'Switching to Tailwind CSS for better maintainability.',
+    updatedAt: '2 days ago',
+    createdAt: '2024.01.20',
+    timestamp: 1705708800000,
+    folder: 'Code App',
+    tags: ['frontend']
   }
 ];
 

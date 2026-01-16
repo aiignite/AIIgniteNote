@@ -9,8 +9,7 @@ if (!rootElement) {
 }
 
 const root = ReactDOM.createRoot(rootElement);
+// Removed StrictMode to improve compatibility with external editor libraries
 root.render(
-  <React.StrictMode>
     <App />
-  </React.StrictMode>
 );

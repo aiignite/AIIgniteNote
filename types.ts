@@ -7,6 +7,8 @@ export interface Note {
   content: string;
   type: NoteType;
   updatedAt: string;
+  createdAt: string;     // Added for sorting
+  timestamp: number;     // Added for accurate sorting
   folder: string;
   tags: string[];
 }
@@ -28,6 +30,6 @@ export interface AppUser {
   avatar: string;
 }
 
-export type SettingsTab = 'General' | 'Profile' | 'Security' | 'AI' | 'Users';
+export type SettingsTab = 'General' | 'Profile' | 'Users';
 
-export type ViewState = 'editor' | 'templates' | 'search' | 'settings' | 'favorites' | 'trash' | 'ai-dashboard';
+export type ViewState = 'editor' | 'templates' | 'search' | 'settings' | 'favorites' | 'tags' | 'trash' | 'ai-dashboard';
