@@ -1,5 +1,7 @@
 
 import { create } from 'zustand';
+import { offlineSync } from '../services/offlineSync';
+import { indexedDB } from '../services/indexedDB';
 
 export type ThemeColor = 'orange' | 'purple' | 'green' | 'blue';
 
@@ -16,6 +18,7 @@ interface ThemeState {
   primaryColor: ThemeColor;
   setPrimaryColor: (color: ThemeColor) => void;
   getTheme: () => ThemeDefinition;
+  initialize: () => Promise<void>;
 }
 
 const THEMES: Record<ThemeColor, ThemeDefinition> = {
@@ -55,6 +58,18 @@ const THEMES: Record<ThemeColor, ThemeDefinition> = {
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
   primaryColor: 'orange',
-  setPrimaryColor: (color) => set({ primaryColor: color }),
-  getTheme: () => THEMES[get().primaryColor]
+  setPrimaryColor: (color) => {
+    set({ primaryColor: color });
+    offlineSync.enqueueRequest('PUT', '/api/users/settings', { primaryColor: color });
+    indexedDB.getSettings().then(settings => {
+      indexedDB.cacheSettings({ ...settings, primaryColor: color });
+    });
+  },
+  getTheme: () => THEMES[get().primaryColor],
+  initialize: async () => {
+    const settings = await indexedDB.getSettings();
+    if (settings && settings.primaryColor) {
+      set({ primaryColor: settings.primaryColor });
+    }
+  }
 }));

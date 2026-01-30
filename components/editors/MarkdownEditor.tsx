@@ -1,5 +1,10 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+
+// 使用React lazy进行动态导入，让Vite正确处理打包
+const MDEditorLazy = lazy(() =>
+  import('@uiw/react-md-editor').then(m => ({ default: m.default || m }))
+);
 
 interface MarkdownEditorProps {
   value: string;
@@ -8,81 +13,82 @@ interface MarkdownEditorProps {
 }
 
 const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ value, onChange, darkMode = false }) => {
-  const [MDEditor, setMDEditor] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
   const [internalValue, setInternalValue] = useState(value);
+  const [isClient, setIsClient] = useState(false);
+  const editorRef = useRef<any>(null);
+
+  // 段保只在客户端渲染
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   // Sync internal value when prop changes
   useEffect(() => {
+    console.log('[MarkdownEditor] value prop changed:', {
+      newValue: value,
+      newValueLength: value?.length || 0,
+      oldValue: internalValue,
+      oldValueLength: internalValue?.length || 0
+    });
     setInternalValue(value);
   }, [value]);
 
-  useEffect(() => {
-    let isMounted = true;
-    
-    // Robust dynamic import
-    import('@uiw/react-md-editor')
-      .then(module => {
-        if (isMounted) {
-          // Check for default export or named export
-          const Component = module.default || module;
-          setMDEditor(() => Component);
-        }
-      })
-      .catch(err => {
-        console.error("Failed to load Markdown Editor:", err);
-        if (isMounted) {
-          setError("Failed to load Markdown Editor.");
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
   const handleChange = (val?: string) => {
     const newValue = val || '';
-    setInternalValue(newValue);
-    onChange(newValue);
+    console.log('[MarkdownEditor] handleChange called:', {
+      receivedValue: val,
+      receivedType: typeof val,
+      newValue,
+      newLength: newValue.length,
+      oldLength: internalValue.length,
+      isEmpty: newValue === '',
+      isSame: newValue === internalValue
+    });
+    
+    // Only trigger onChange if value actually changed
+    if (newValue !== internalValue) {
+      setInternalValue(newValue);
+      onChange(newValue);
+    } else {
+      console.log('[MarkdownEditor] Skipping onChange - value unchanged');
+    }
   };
 
-  if (error) {
-    return (
-      <div className="h-full w-full flex items-center justify-center text-red-500 bg-gray-50/50">
-        <div className="text-center">
-          <span className="material-symbols-outlined text-4xl mb-2">error</span>
-          <p>{error}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!MDEditor) {
+  if (!isClient) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-transparent">
         <div className="flex flex-col items-center gap-3">
            <span className="size-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-           <span className="text-xs text-gray-500">Loading Markdown Editor...</span>
+           <span className="text-xs text-gray-500">Loading...</span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full w-full flex flex-col" data-color-mode={darkMode ? 'dark' : 'light'}>
-      <MDEditor
-        value={internalValue}
-        onChange={handleChange}
-        height="100%"
-        preview="live"
-        className="flex-1 border-none shadow-none bg-transparent"
-        visibleDragbar={false}
-        textareaProps={{
-          placeholder: "Start writing your markdown note..."
-        }}
-      />
-    </div>
+    <Suspense
+      fallback={
+        <div className="h-full w-full flex items-center justify-center bg-transparent">
+          <div className="flex flex-col items-center gap-3">
+             <span className="size-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+             <span className="text-xs text-gray-500">Loading Markdown Editor...</span>
+          </div>
+        </div>
+      }
+    >
+      <div className="h-full w-full flex flex-col" data-color-mode={darkMode ? 'dark' : 'light'}>
+        <MDEditorLazy
+          value={internalValue}
+          onChange={handleChange}
+          height={600}
+          preview="live"
+          className="flex-1 border-none shadow-none bg-transparent"
+          textareaProps={{
+            placeholder: "Start writing your markdown note..."
+          }}
+        />
+      </div>
+    </Suspense>
   );
 };
 

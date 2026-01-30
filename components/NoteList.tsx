@@ -2,18 +2,27 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Note, NoteType } from '../types';
 import { useLanguageStore } from '../store/languageStore';
+import { Folder } from '../services/api';
 
 interface NoteListProps {
   notes: Note[];
+  folders?: Folder[];
   selectedNoteId: string | null;
   onSelectNote: (id: string) => void;
   onAddNote: (type: NoteType, folder?: string) => void;
+  onAddFolder?: (name: string, parentId?: string) => void;
+  onDeleteFolder?: (id: string) => void;
+  onUpdateFolder?: (id: string, name: string) => void;
   onDeleteNote: (id: string) => void;
   onUpdateNote: (note: Note) => void;
+  onToggleFavorite?: (id: string) => void;
   width?: number;
+  loading?: boolean;
+  error?: string | null;
 }
 
 type SortMode = 'updatedAt' | 'createdAt' | 'title';
+type SortOrder = 'asc' | 'desc';
 
 interface ModalConfig {
   isOpen: boolean;
@@ -27,14 +36,20 @@ interface ModalConfig {
   onConfirm: (value: string) => void;
 }
 
-const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote, onAddNote, onDeleteNote, onUpdateNote, width }) => {
+const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId, onSelectNote, onAddNote, onAddFolder, onDeleteFolder, onUpdateFolder, onDeleteNote, onUpdateNote, onToggleFavorite, width, loading = false, error = null }) => {
   // Default viewMode changed to 'list' as requested
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('updatedAt');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
-  
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+
   const { t } = useLanguageStore();
 
   // Folder State
@@ -109,6 +124,9 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
           onConfirm: () => onDeleteNote(note.id)
         });
         break;
+      case 'favorite':
+        if (onToggleFavorite) onToggleFavorite(note.id);
+        break;
       case 'tags':
         setModalInputValue('');
         setModalConfig({
@@ -142,19 +160,27 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
   };
 
   // Logic to process items based on currentFolder
-  const { displayItems, folders } = useMemo(() => {
-    const uniqueFolders = Array.from(new Set(notes.map(n => n.folder).filter(f => f !== 'General' && f))).sort();
-    
-    let items: (Note | { id: string; isFolder: true; name: string; date: string })[] = [];
+  const { displayItems } = useMemo(() => {
+    let items: (Note | { id: string; isFolder: true; name: string; date: string; noteCount?: number })[] = [];
 
     if (currentFolder === null) {
       // Root View: Show Folders + Notes in 'General' (or root)
-      const folderItems = uniqueFolders.map(folderName => {
-        // Find the most recent date in this folder for display
+      // Use actual folders from API
+      const folderItems = folders.map(folder => ({
+        id: `folder-${folder.id}`,
+        isFolder: true as const,
+        name: folder.name,
+        date: folder.updatedAt,
+        noteCount: folder.noteCount || 0
+      }));
+
+      // Also include legacy folders from notes (for backward compatibility)
+      const legacyFolderNames = Array.from(new Set(notes.map(n => n.folder).filter(f => f !== 'General' && f && !folders.some(af => af.name === f)))).sort();
+      const legacyFolderItems = legacyFolderNames.map(folderName => {
         const folderNotes = notes.filter(n => n.folder === folderName);
         const latestNote = folderNotes.sort((a,b) => b.timestamp - a.timestamp)[0];
         return {
-          id: `folder-${folderName}`,
+          id: `folder-legacy-${folderName}`,
           isFolder: true as const,
           name: folderName,
           date: latestNote ? latestNote.updatedAt : ''
@@ -162,20 +188,73 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
       });
 
       const rootNotes = notes.filter(n => !n.folder || n.folder === 'General').sort((a, b) => b.timestamp - a.timestamp);
-      items = [...folderItems, ...rootNotes];
+      items = [...folderItems, ...legacyFolderItems, ...rootNotes];
     } else {
       // Folder View: Show only notes in this folder
       items = notes
-        .filter(n => n.folder === currentFolder)
-        .sort((a, b) => {
-           if (sortMode === 'title') return a.title.localeCompare(b.title);
-           if (sortMode === 'createdAt') return b.timestamp - a.timestamp;
-           return b.timestamp - a.timestamp;
-        });
+        .filter(n => n.folder === currentFolder);
     }
 
-    return { displayItems: items, folders: uniqueFolders };
-  }, [notes, currentFolder, sortMode]);
+    // Filter by favorites if active
+    if (showFavoritesOnly) {
+      items = items.filter(item => {
+        if ('isFolder' in item && item.isFolder) return false;
+        return (item as Note).isFavorite;
+      });
+    }
+
+    // Global sorting logic for notes (folders always come first in root, but notes inside folders or root are sorted)
+    items = items.sort((a, b) => {
+      const isAFolder = 'isFolder' in a && a.isFolder;
+      const isBFolder = 'isFolder' in b && b.isFolder;
+
+      // Always keep folders at the top if they are mixed
+      if (isAFolder && !isBFolder) return -1;
+      if (!isAFolder && isBFolder) return 1;
+      
+      if (isAFolder && isBFolder) {
+        // Sort folders by name always
+        return a.name.localeCompare(b.name);
+      }
+
+      // Both are notes, apply sortMode and sortOrder
+      const noteA = a as Note;
+      const noteB = b as Note;
+      
+      let comparison = 0;
+      if (sortMode === 'title') {
+        comparison = noteA.title.localeCompare(noteB.title);
+      } else if (sortMode === 'createdAt') {
+        comparison = new Date(noteA.createdAt).getTime() - new Date(noteB.createdAt).getTime();
+      } else {
+        comparison = noteA.timestamp - noteB.timestamp;
+      }
+      
+      return sortOrder === 'desc' ? -comparison : comparison;
+    });
+
+    // Search filtering
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      const filteredItems = items.filter(item => {
+        // Check if item is a folder by checking for 'isFolder' property
+        if ('isFolder' in item && item.isFolder) {
+          // Search folder names
+          return item.name.toLowerCase().includes(query);
+        } else {
+          // Search note titles and content
+          const note = item as Note;
+          return (
+            note.title.toLowerCase().includes(query) ||
+            (note.content && note.content.toLowerCase().includes(query))
+          );
+        }
+      });
+      items = filteredItems;
+    }
+
+    return { displayItems: items };
+  }, [notes, folders, currentFolder, sortMode, sortOrder, searchQuery, showFavoritesOnly]);
 
   const noteTypes: { type: NoteType; icon: string; color: string }[] = [
     { type: 'Markdown', icon: 'markdown', color: 'text-blue-500' },
@@ -209,12 +288,16 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
         confirmLabel: t.noteList.create,
         onConfirm: (folderName) => {
             if (folderName && folderName.trim()) {
-                const newFolderPath = currentFolder 
-                    ? `${currentFolder}/${folderName.trim()}` 
-                    : folderName.trim();
-                
-                // To "create" a folder in this system, we must create a note inside it.
-                onAddNote('Markdown', newFolderPath);
+                if (onAddFolder) {
+                    // Call the proper folder creation API
+                    onAddFolder(folderName.trim(), currentFolder || undefined);
+                } else {
+                    // Fallback to old behavior if onAddFolder not provided
+                    const newFolderPath = currentFolder
+                        ? `${currentFolder}/${folderName.trim()}`
+                        : folderName.trim();
+                    onAddNote('Markdown', newFolderPath);
+                }
             }
         }
     });
@@ -224,7 +307,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
   return (
     <div 
       className="flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-background-dark shrink-0 transition-none relative" 
-      style={{ width: width ? `${width}px` : (viewMode === 'grid' ? '380px' : '320px') }}
+      style={{ width: width ? `${width}px` : (viewMode === 'grid' ? '300px' : '260px') }}
     >
       <div className="p-4 border-b border-gray-200 dark:border-gray-800 z-20 relative">
         <div className="flex items-center justify-between mb-4">
@@ -288,43 +371,85 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
             <div className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-gray-400">
               <span className="material-symbols-outlined text-sm">search</span>
             </div>
-            <input 
-              className="block w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#1c2b33] border-none rounded-lg text-sm placeholder-gray-400 focus:ring-1 focus:ring-primary transition-shadow" 
+            <input
+              className="block w-full pl-8 pr-8 py-1.5 bg-white dark:bg-[#1c2b33] border-none rounded-lg text-sm placeholder-gray-400 focus:ring-1 focus:ring-primary transition-shadow"
               placeholder={t.noteList.searchPlaceholder}
               type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            )}
           </div>
           
-          {/* Sort Button (Only show inside folders) */}
-          {currentFolder && (
-            <div className="relative" ref={sortMenuRef}>
-               <button
-                 onClick={() => setShowSortMenu(!showSortMenu)}
-                 className="p-1.5 bg-gray-200 dark:bg-gray-800/50 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 h-full flex items-center justify-center"
-                 title={`Sort by: ${getSortLabel()}`}
-               >
-                 <span className="material-symbols-outlined text-sm">sort</span>
-               </button>
-               {showSortMenu && (
-                  <div className="absolute top-full right-0 mt-2 w-32 bg-white dark:bg-[#1c2b33] rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden">
-                    {[
-                      { id: 'updatedAt', label: t.noteList.sortModified },
-                      { id: 'createdAt', label: t.noteList.sortCreated },
-                      { id: 'title', label: t.noteList.sortName }
-                    ].map((option) => (
-                      <button
-                        key={option.id}
-                        onClick={() => { setSortMode(option.id as SortMode); setShowSortMenu(false); }}
-                        className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between ${sortMode === option.id ? 'bg-primary/10 text-primary font-bold' : 'hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-                      >
+          {/* Favorite Toggle Button */}
+          <button
+            onClick={() => setShowFavoritesOnly(!showFavoritesOnly)}
+            className={`p-1.5 rounded-lg transition-all h-full flex items-center justify-center ${
+              showFavoritesOnly 
+                ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' 
+                : 'bg-gray-200 dark:bg-gray-800/50 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+            }`}
+            title={showFavoritesOnly ? "Show All Notes" : "Show Favorites Only"}
+          >
+            <span className={`material-symbols-outlined text-sm ${showFavoritesOnly ? 'fill-current' : ''}`}>
+              star
+            </span>
+          </button>
+
+          {/* Sort Button */}
+          <div className="relative" ref={sortMenuRef}>
+             <button
+               onClick={() => setShowSortMenu(!showSortMenu)}
+               className="p-1.5 bg-gray-200 dark:bg-gray-800/50 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 h-full flex items-center justify-center"
+               title={`Sort by: ${getSortLabel()}`}
+             >
+               <span className="material-symbols-outlined text-sm">sort</span>
+             </button>
+             {showSortMenu && (
+                <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden py-1">
+                  <div className="px-3 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Sort Field</div>
+                  {[
+                    { id: 'updatedAt', label: t.noteList.sortModified },
+                    { id: 'createdAt', label: t.noteList.sortCreated },
+                    { id: 'title', label: t.noteList.sortName }
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      onClick={() => { setSortMode(option.id as SortMode); }}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between ${sortMode === option.id ? 'text-primary font-bold' : 'hover:bg-gray-50 dark:hover:bg-gray-800'}`}
+                    >
+                      {option.label}
+                      {sortMode === option.id && <span className="material-symbols-outlined text-xs">check</span>}
+                    </button>
+                  ))}
+                  <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
+                  <div className="px-3 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order</div>
+                  {[
+                    { id: 'desc', label: 'Descending', icon: 'south' },
+                    { id: 'asc', label: 'Ascending', icon: 'north' }
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      onClick={() => { setSortOrder(option.id as SortOrder); }}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between ${sortOrder === option.id ? 'text-primary font-bold' : 'hover:bg-gray-50 dark:hover:bg-gray-800'}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-xs">{option.icon}</span>
                         {option.label}
-                        {sortMode === option.id && <span className="material-symbols-outlined text-xs">check</span>}
-                      </button>
-                    ))}
-                  </div>
-               )}
-            </div>
-          )}
+                      </div>
+                      {sortOrder === option.id && <span className="material-symbols-outlined text-xs">check</span>}
+                    </button>
+                  ))}
+                </div>
+             )}
+          </div>
 
           {/* View Toggles */}
           <div className="flex bg-gray-200 dark:bg-gray-800/50 rounded-lg p-0.5 shrink-0">
@@ -357,10 +482,48 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
       <div className={`flex-1 overflow-y-auto scrollbar-hide p-3 flex flex-col ${
         viewMode === 'grid' ? 'gap-3' : 'gap-1'
       }`}>
-        {displayItems.length === 0 && (
+        {/* Loading State */}
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-10">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-3"></div>
+            <p className="text-xs text-gray-400">Loading notes...</p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && !loading && (
+          <div className="flex flex-col items-center justify-center py-10">
+            <span className="material-symbols-outlined text-4xl mb-2 text-red-400">error</span>
+            <p className="text-xs text-gray-400 mb-2">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-3 py-1.5 text-xs bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!loading && !error && displayItems.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-gray-400">
-             <span className="material-symbols-outlined text-4xl mb-2 opacity-50">folder_open</span>
-             <p className="text-xs">{t.noteList.emptyFolder}</p>
+             <span className="material-symbols-outlined text-4xl mb-2 opacity-50">
+               {searchQuery ? 'search_off' : 'folder_open'}
+             </span>
+             <p className="text-xs">
+               {searchQuery
+                 ? `No notes found matching "${searchQuery}"`
+                 : t.noteList.emptyFolder
+               }
+             </p>
+             {searchQuery && (
+               <button
+                 onClick={() => setSearchQuery('')}
+                 className="mt-2 px-3 py-1.5 text-xs bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+               >
+                 Clear search
+               </button>
+             )}
           </div>
         )}
         
@@ -370,16 +533,21 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
             return (
               <div 
                 key={item.id}
-                onClick={() => setCurrentFolder(item.name)}
                 className={`group relative transition-all border border-transparent cursor-pointer bg-white dark:bg-[#1c2b33] hover:bg-gray-50 dark:hover:bg-gray-800/80
                   ${viewMode === 'grid' ? 'rounded-xl p-4 flex flex-col items-center text-center shadow-sm' : 'px-4 py-3 rounded-lg flex items-center gap-3 shadow-sm'}
                 `}
               >
-                 <div className={`shrink-0 flex items-center justify-center text-amber-400 ${viewMode === 'grid' ? 'mb-2' : ''}`}>
+                 <div 
+                   onClick={() => setCurrentFolder(item.name)}
+                   className={`shrink-0 flex items-center justify-center text-amber-400 ${viewMode === 'grid' ? 'mb-2' : ''}`}
+                 >
                     <span className="material-symbols-outlined" style={{ fontSize: viewMode === 'grid' ? '48px' : '24px' }}>folder</span>
                  </div>
                  
-                 <div className="flex-1 min-w-0 text-left">
+                 <div 
+                   onClick={() => setCurrentFolder(item.name)}
+                   className="flex-1 min-w-0 text-left"
+                 >
                    <h3 className={`font-bold text-gray-800 dark:text-gray-200 ${viewMode === 'grid' ? 'text-sm' : 'text-sm'}`}>
                      {item.name}
                    </h3>
@@ -388,8 +556,67 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
                    )}
                  </div>
                  
+                 {/* Folder action buttons */}
+                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                   {onUpdateFolder && (
+                     <button
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         setModalConfig({
+                           isOpen: true,
+                           type: 'input',
+                           title: 'Rename Folder',
+                           placeholder: 'New folder name',
+                           initialValue: item.name,
+                           confirmLabel: 'Rename',
+                           confirmColor: 'bg-primary',
+                           onConfirm: (newName) => {
+                             if (newName.trim() && newName !== item.name) {
+                               onUpdateFolder(item.id, newName.trim());
+                             }
+                             setModalConfig(null);
+                           }
+                         });
+                         setModalInputValue(item.name);
+                       }}
+                       className="p-1 text-gray-400 hover:text-primary transition-colors"
+                       title="Rename folder"
+                     >
+                       <span className="material-symbols-outlined text-base">edit</span>
+                     </button>
+                   )}
+                   {onDeleteFolder && (
+                     <button
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         setModalConfig({
+                           isOpen: true,
+                           type: 'confirm',
+                           title: 'Delete Folder',
+                           message: `Are you sure you want to delete "${item.name}"? All notes inside will also be deleted.`,
+                           confirmLabel: 'Delete',
+                           confirmColor: 'bg-red-500',
+                           onConfirm: () => {
+                             onDeleteFolder(item.id);
+                             setModalConfig(null);
+                           }
+                         });
+                       }}
+                       className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                       title="Delete folder"
+                     >
+                       <span className="material-symbols-outlined text-base">delete</span>
+                     </button>
+                   )}
+                 </div>
+                 
                  {viewMode === 'list' && (
-                    <span className="material-symbols-outlined text-gray-300 text-sm">chevron_right</span>
+                    <span 
+                      onClick={() => setCurrentFolder(item.name)}
+                      className="material-symbols-outlined text-gray-300 text-sm"
+                    >
+                      chevron_right
+                    </span>
                  )}
               </div>
             );
@@ -416,7 +643,11 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
               >
                 {/* Context Menu Logic */}
                 {activeMenuId === note.id && (
-                    <div ref={menuRef} className="absolute right-2 top-8 w-36 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                    <div ref={menuRef} className="absolute right-2 top-8 w-40 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100 py-1">
+                        <button onClick={(e) => handleMenuAction(e, 'favorite', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                          <span className={`material-symbols-outlined text-sm ${note.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`}>star</span> 
+                          {note.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+                        </button>
                         <button onClick={(e) => handleMenuAction(e, 'tags', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
                           <span className="material-symbols-outlined text-sm">label</span> {t.noteList.tagBtn}...
                         </button>
@@ -448,14 +679,19 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
                           {note.type}
                       </div>
 
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
-                        className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 transition-all ${
-                            activeMenuId === note.id ? 'opacity-100 bg-gray-100 dark:bg-gray-700 text-gray-600' : ''
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-base">more_horiz</span>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {note.isFavorite && (
+                          <span className="material-symbols-outlined text-amber-400 text-sm fill-current">star</span>
+                        )}
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
+                          className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 transition-all ${
+                              activeMenuId === note.id ? 'opacity-100 bg-gray-100 dark:bg-gray-700 text-gray-600' : ''
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-base">more_horiz</span>
+                        </button>
+                      </div>
                     </div>
 
                     <h3 className="font-bold text-sm mb-1 text-gray-900 dark:text-gray-100">{note.title}</h3>
@@ -491,19 +727,24 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
                        <div className="text-[10px] text-gray-400 truncate flex items-center gap-2">
                           <span>{note.updatedAt}</span>
                           {note.content && (
-                            <span className="opacity-60 truncate max-w-[150px]">{note.content.substring(0, 30).replace(/[#*]/g, '')}</span>
+                            <span className="opacity-60 truncate max-w-[150px]">{String(note.content).substring(0, 30).replace(/[#*]/g, '')}</span>
                           )}
                        </div>
                     </div>
 
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
-                      className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 transition-all ${
-                          activeMenuId === note.id ? 'opacity-100' : ''
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-base">more_horiz</span>
-                    </button>
+                    <div className="flex items-center gap-1 opacity-100 group-hover:opacity-100 transition-opacity">
+                      {note.isFavorite && (
+                        <span className="material-symbols-outlined text-amber-400 text-sm fill-current">star</span>
+                      )}
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
+                        className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 transition-all ${
+                            activeMenuId === note.id ? 'opacity-100' : ''
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-base">more_horiz</span>
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
@@ -512,7 +753,12 @@ const NoteList: React.FC<NoteListProps> = ({ notes, selectedNoteId, onSelectNote
         })}
       </div>
       <div className="p-3 border-t border-gray-200 dark:border-gray-800 flex justify-between items-center text-[10px] text-gray-400">
-        <span>{displayItems.length} {t.noteList.items}</span>
+        <span>
+          {searchQuery
+            ? `"${searchQuery}": ${displayItems.length} ${t.noteList.items}`
+            : `${displayItems.length} ${t.noteList.items}`
+          }
+        </span>
         <span className="flex items-center gap-1">
           <span className="size-1.5 bg-green-500 rounded-full animate-pulse"></span> {t.noteList.cloudSynced}
         </span>

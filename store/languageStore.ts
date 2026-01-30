@@ -1,5 +1,7 @@
 
 import { create } from 'zustand';
+import { offlineSync } from '../services/offlineSync';
+import { indexedDB } from '../services/indexedDB';
 
 export type Language = 'en' | 'zh';
 
@@ -188,10 +190,24 @@ interface LanguageState {
   language: Language;
   setLanguage: (lang: Language) => void;
   t: typeof translations.en;
+  initialize: () => Promise<void>;
 }
 
 export const useLanguageStore = create<LanguageState>((set) => ({
   language: 'en',
-  t: translations.en, // Initialize explicitly with default language object
-  setLanguage: (lang) => set({ language: lang, t: translations[lang] }), // Update explicitly when language changes
+  t: translations.en,
+  setLanguage: (lang) => {
+    set({ language: lang, t: translations[lang] });
+    offlineSync.enqueueRequest('PUT', '/api/users/settings', { language: lang });
+    indexedDB.getSettings().then(settings => {
+      indexedDB.cacheSettings({ ...settings, language: lang });
+    });
+  },
+  initialize: async () => {
+    const settings = await indexedDB.getSettings();
+    if (settings && settings.language) {
+      const lang = settings.language as Language;
+      set({ language: lang, t: translations[lang] });
+    }
+  }
 }));

@@ -9,6 +9,7 @@ interface RichTextEditorProps {
 const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
   const [QuillComponent, setQuillComponent] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [internalValue, setInternalValue] = useState(value);
 
   useEffect(() => {
     // Robust dynamic import
@@ -23,6 +24,11 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
         setError("Failed to load Rich Text Editor.");
       });
   }, []);
+
+  // Sync internal value when prop changes
+  useEffect(() => {
+    setInternalValue(value);
+  }, [value]);
 
   const modules = {
     toolbar: [
@@ -40,6 +46,36 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
     'list', 'bullet',
     'link', 'image', 'code-block'
   ];
+
+  // Handle Quill onChange with validation
+  const handleChange = (val?: string) => {
+    const newValue = val || '';
+    const isEmptyContent = newValue === '' || newValue === '<p><br></p>' || newValue === '<p></p>';
+    
+    console.log('[RichTextEditor] handleChange called:', {
+      receivedValue: val,
+      receivedType: typeof val,
+      newValue,
+      newLength: newValue.length,
+      oldLength: internalValue.length,
+      isEmpty: isEmptyContent,
+      isSame: newValue === internalValue
+    });
+
+    setInternalValue(newValue);
+
+    // Only trigger onChange if content actually changed and is not empty
+    if (newValue !== internalValue) {
+      if (!isEmptyContent || newValue.length > 11) { // 11 = '<p><br></p>'.length
+        console.log('[RichTextEditor] Triggering onChange with content length:', newValue.length);
+        onChange(newValue);
+      } else {
+        console.log('[RichTextEditor] Skipping onChange - content is empty or default empty state');
+      }
+    } else {
+      console.log('[RichTextEditor] Skipping onChange - value unchanged');
+    }
+  };
 
   if (error) {
     return (
@@ -64,8 +100,8 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
     <div className="h-full w-full flex flex-col bg-transparent">
       <QuillComponent
         theme="snow"
-        value={value}
-        onChange={onChange}
+        value={internalValue}
+        onChange={handleChange}
         modules={modules}
         formats={formats}
         className="h-full flex flex-col"

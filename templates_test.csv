@@ -1,0 +1,62 @@
+id,name,description,prompt,category,icon,noteType,isActive,isPublic,usageCount
+tmpl001,会议记录,快速记录会议要点,## 会议主题
+- 日期：
+- 参与者：
+- 决策：
+- 行动项：,Productivity,auto_awesome,MARKDOWN,true,true,0
+tmpl002,项目计划,项目跟踪和规划模板,# 项目名称
+
+## 目标
+- [ ] 目标1
+- [ ] 目标2
+
+## 里程碑
+- [ ] 里程碑1
+- [ ] 里程碑2
+
+## 资源
+- 团队成员：
+- 预算：
+- 时间线：,Productivity,folder,MARKDOWN,true,true,0
+tmpl003,日报,每日工作汇报模板,# 日报 - {日期}
+
+## 今日完成
+-
+
+## 遇到的问题
+-
+
+## 明日计划
+-
+
+## 需要支持
+-,Productivity,today,MARKDOWN,true,true,0
+tmpl004,周报,每周工作总结模板,# 周报 - 第{周数}周
+
+## 本周完成
+-
+
+## 本周问题
+-
+
+## 下周计划
+-
+
+## KPI达成
+-,Productivity,event,MARKDOWN,true,true,0
+tmpl005,学习笔记,学习记录模板,# {主题}
+
+## 学习目标
+-
+
+## 关键概念
+-
+
+## 代码示例
+\`\`\`
+
+## 练习题
+-
+
+## 总结
+-,Education,school,MARKDOWN,true,true,0

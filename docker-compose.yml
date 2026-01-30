@@ -1,0 +1,132 @@
+# AI Ignite Note - Docker Compose Configuration
+# Complete full-stack application with PostgreSQL, Backend API, and Frontend
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: aiignitenote-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aiignite}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aiignite_password}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_ignite_note}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiignite} -d ${POSTGRES_DB:-ai_ignite_note}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aiignitenet
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aiignitenote-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-aiignite}:${POSTGRES_PASSWORD:-aiignite_password}@postgres:5432/${POSTGRES_DB:-ai_ignite_note}?schema=public
+
+      # Server
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 4000
+      # CORS - Configure this to match your frontend URL in different environments
+      # Development: http://localhost:3200
+      # Docker: http://localhost:3200 (browsers access frontend via localhost)
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3200}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3200}
+
+      # JWT
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-this-in-production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-your-super-secret-refresh-key-change-this}
+      JWT_ACCESS_EXPIRY: ${JWT_ACCESS_EXPIRY:-15m}
+      JWT_REFRESH_EXPIRY: ${JWT_REFRESH_EXPIRY:-7d}
+
+      # AI Providers - Google Gemini
+      GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
+
+      # AI Providers - Anthropic Claude
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # AI Providers - OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # AI Providers - Local Services (accessible via host.docker.internal on Docker Desktop)
+      OLLAMA_API_URL: ${OLLAMA_API_URL:-http://host.docker.internal:11434}
+      LM_STUDIO_API_URL: ${LM_STUDIO_API_URL:-http://host.docker.internal:1234}
+
+      # Rate Limiting
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
+
+      # File Upload
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-10485760}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # Email Configuration
+      EMAIL_HOST: ${EMAIL_HOST:-smtp.qq.com}
+      EMAIL_PORT: ${EMAIL_PORT:-465}
+      EMAIL_USER: ${EMAIL_USER:-}
+      EMAIL_PASS: ${EMAIL_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_logs:/app/logs
+    ports:
+      - "${BACKEND_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - aiignitenet
+
+  # Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aiignitenote-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-3200}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - aiignitenet
+
+# Named volumes for data persistence
+volumes:
+  postgres_data:
+    driver: local
+  backend_uploads:
+    driver: local
+  backend_logs:
+    driver: local
+
+# Networks
+networks:
+  aiignitenet:
+    driver: bridge

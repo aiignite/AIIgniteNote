@@ -1,102 +1,997 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ChatMessage } from '../types';
+import { api } from '../services/api';
+import { indexedDB } from '../services/indexedDB';
+import { ModelForm } from './ModelForm';
+import { AssistantForm } from './AssistantForm';
+
+// AI Model 类型定义
+interface AIModel {
+  id: string;
+  name: string;
+  modelId: string;
+  provider: string;
+  endpoint?: string;
+  apiKey?: string;
+  popularity: number;
+  isPublic: boolean;
+  isCustom: boolean;
+  speed: string;
+  cost: string;
+  context: string;
+  description: string;
+}
+
+// AI Assistant 类型定义
+interface AIAssistant {
+  id: string;
+  name: string;
+  description: string;
+  role: string;
+  avatar: string;
+  systemPrompt: string;
+  category: string;
+  isSystem: boolean;
+  isCustom?: boolean;
+  usageCount: number;
+  model?: string;  // Model ID to use for this assistant
+}
 
 const AIDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'Models' | 'Assistants' | 'Chat'>('Chat');
   const [inputText, setInputText] = useState('');
+  const [models, setModels] = useState<any[]>([]);
+  const [providers, setProviders] = useState<any>(null);
+  const [loadingProviders, setLoadingProviders] = useState(true);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [loadingConversations, setLoadingConversations] = useState(true);
 
-  // ... (Data Constants kept same as before for brevity, logic is the focus)
-  const chatHistory = [
-    { title: 'Analyzing Product Roadmap 2024', time: '2 mins ago', active: true },
-    { title: 'React Hooks Best Practices', time: '1 hour ago', active: false },
-    { title: 'Campaign Strategy: Blue Horizon', time: 'Yesterday', active: false },
-    { title: 'Market Research - Q4', time: 'Yesterday', active: false },
-  ];
+  // 表单状态
+  const [showModelForm, setShowModelForm] = useState(false);
+  const [editingModel, setEditingModel] = useState<any>(null);
+  const [showAssistantForm, setShowAssistantForm] = useState(false);
+  const [editingAssistant, setEditingAssistant] = useState<any>(null);
 
-  const messages: ChatMessage[] = [
-    {
-      role: 'model',
-      text: "I've reviewed your recent notes on the Product Roadmap 2024. It looks like you're focusing on AI-driven productivity for Q1.",
-      suggestions: [
-        { label: 'Generate Action Items', icon: 'format_list_bulleted' },
-        { label: 'Visualize as Mind Map', icon: 'account_tree' },
-      ]
-    },
-    {
-      role: 'user',
-      text: "Can you extract all the Q1 focus points into a checklist? I need to share this with the engineering team tomorrow morning."
-    },
-    {
-      role: 'model',
-      text: "Certainly! Here are the core focus points for Q1 extracted from your roadmap:",
-      type: 'checklist',
-      items: [
-        { label: 'Integrate GPT-4 Turbo for summarization', checked: true },
-        { label: 'Real-time voice-to-text transcription', checked: false },
-        { label: 'Semantic search implementation', checked: false },
-        { label: 'Speaker identification in transcripts', checked: false },
-      ]
+  // Chat 功能状态
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [attachments, setAttachments] = useState<File[]>([]);
+
+  // Refs for stream control
+  const streamAbortControllerRef = useRef<AbortController | null>(null);
+  const stopSignalRef = useRef(false);
+
+  const loadCustomModelsAndAssistants = async () => {
+    try {
+      console.log('[Load] Loading models and assistants from database...');
+
+      // Load models from database only
+      const modelsResponse = await api.getAIModels() as any;
+      if (modelsResponse.success && modelsResponse.data) {
+        const dbModels = modelsResponse.data;
+        console.log('[Load] Loaded models from database:', dbModels);
+
+        // Cache to IndexedDB using clear-and-replace to ensure deleted items are removed
+        await indexedDB.clearAndCacheModels(dbModels);
+        console.log('[Load] Models synced to IndexedDB:', dbModels.length);
+
+        // All models come from database - mark them all as custom/deletable
+        setModels(dbModels.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          modelId: m.modelId,
+          provider: m.provider,
+          desc: m.description || `${m.provider} model`,
+          speed: m.speed || 'Fast',
+          cost: m.cost || '$',
+          context: m.context || 'N/A',
+          isCustom: true,  // All database models are deletable
+          popularity: m.popularity,
+        })));
+        console.log('[Load] Models loaded:', dbModels.length);
+      }
+
+      // Load assistants from database only
+      const assistantsResponse = await api.getAIAssistants() as any;
+      if (assistantsResponse.success && assistantsResponse.data) {
+        const { system, custom } = assistantsResponse.data;
+        const allAssistants = [...(system || []), ...(custom || [])];
+        
+        // Cache to IndexedDB
+        await indexedDB.clearAndCacheAssistants(allAssistants);
+        console.log('[Load] Assistants synced to IndexedDB:', allAssistants.length);
+        
+        // All assistants come from database - mark custom ones as deletable
+        setAssistants(allAssistants.map((a: any) => ({
+          ...a,
+          isCustom: !a.isSystem,  // Only non-system assistants are deletable
+        })));
+        console.log('[Load] Assistants loaded:', allAssistants.length);
+      }
+    } catch (error) {
+      console.error('[Load] Error loading data:', error);
+      
+      // Fallback to IndexedDB cache
+      try {
+        const cachedModels = await indexedDB.getAIModels();
+        if (cachedModels.length > 0) {
+          setModels(cachedModels.map((m: any) => ({
+            ...m,
+            isCustom: true,
+          })));
+          console.log('[Load] Loaded models from IndexedDB cache:', cachedModels.length);
+        }
+        
+        const cachedAssistants = await indexedDB.getAIAssistants();
+        if (cachedAssistants.length > 0) {
+          setAssistants(cachedAssistants.map((a: any) => ({
+            ...a,
+            isCustom: !a.isSystem,
+          })));
+          console.log('[Load] Loaded assistants from IndexedDB cache:', cachedAssistants.length);
+        }
+      } catch (cacheError) {
+        console.error('[Load] Failed to load from IndexedDB cache:', cacheError);
+      }
     }
-  ];
+  };
 
-  const models = [
-    { id: 'gemini-pro', name: 'Gemini 3 Pro', desc: 'Best for complex reasoning & coding', speed: 'Fast', cost: '$$', context: '2M' },
-    { id: 'gemini-flash', name: 'Gemini 3 Flash', desc: 'Lightning fast for daily tasks', speed: 'Ultra Fast', cost: '$', context: '1M' },
-    { id: 'gpt-4', name: 'GPT-4o', desc: 'Versatile problem solver', speed: 'Fast', cost: '$$$', context: '128K' },
-    { id: 'claude', name: 'Claude 3.5 Sonnet', desc: 'Excellent at creative writing', speed: 'Moderate', cost: '$$', context: '200K' },
-  ];
+  const saveCustomModelsAndAssistants = async (modelsToSave?: any[], assistantsToSave?: AIAssistant[]) => {
+    try {
+      const modelsList = modelsToSave || models;
+      
+      // Save models to database
+      const customModels = modelsList.filter(m => m.isCustom);
+      console.log('Saving custom models to database:', customModels.length, customModels);
 
-  const assistants = [
-    { id: 'coder', name: 'Code Architect', role: 'Engineering', desc: 'Specialized in React, Python, and System Design patterns.', avatar: 'code' },
-    { id: 'writer', name: 'Copy Editor', role: 'Marketing', desc: 'Refines tone, grammar, and SEO optimization for content.', avatar: 'edit' },
-    { id: 'data', name: 'Data Analyst', role: 'Business', desc: 'Converts raw CSV/JSON data into actionable insights.', avatar: 'analytics' },
-    { id: 'pm', name: 'Product Lead', role: 'Product', desc: 'Helps with PRDs, user stories, and roadmap prioritization.', avatar: 'rocket_launch' },
-  ];
+      for (const model of customModels) {
+        if (model.id && !model.id.startsWith('gemini-') && !model.id.startsWith('gpt-') && !model.id.startsWith('claude-')) {
+          try {
+            await api.createAIModel({
+              name: model.name || model.id,
+              modelId: model.modelId || model.id,
+              provider: model.provider || 'GEMINI',
+              popularity: model.popularity || 50,
+              speed: model.speed,
+              cost: model.cost,
+              context: model.context,
+              description: model.desc,
+            });
+          } catch (error) {
+            console.error('Failed to save model to database:', error);
+          }
+        }
+      }
+      
+      // Note: Assistants are now saved individually via handleSaveAssistant/handleDeleteAssistant
+    } catch (error) {
+      console.error('Error saving custom data:', error);
+    }
+  };
+
+  // Initialize with empty array - assistants will be loaded from database
+  const [assistants, setAssistants] = useState<AIAssistant[]>([]);
+  
+  // Default assistant for new chats (used when no assistant is selected)
+  const [currentAssistant, setCurrentAssistant] = useState<AIAssistant>({
+    id: 'default',
+    name: 'AI Assistant',
+    description: 'Helpful for any task',
+    role: 'General',
+    avatar: 'auto_awesome',
+    systemPrompt: 'You are a helpful AI assistant.',
+    category: 'General',
+    isSystem: true,
+    usageCount: 0,
+    model: undefined,  // Will use default model if not specified
+  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'name' | 'messages'>('updated');
+
+  // Load available AI providers and models on mount
+  useEffect(() => {
+    const loadAllData = async () => {
+      // 先加载自定义模型（需要等待完成）
+      await loadCustomModelsAndAssistants();
+
+      // 然后加载系统模型
+      await loadProviders();
+      await loadConversationHistory();
+      
+      // Initialize with greeting if starting fresh in Chat tab
+      // Only create new chat if we don't have any conversations
+      if (chatMessages.length === 0 && !currentConversationId) {
+        try {
+          await handleNewChat();
+        } catch (error) {
+          console.error('Failed to initialize new chat:', error);
+        }
+      }
+    };
+
+    loadAllData();
+  }, []);
+
+  const loadProviders = async () => {
+    try {
+      setLoadingProviders(true);
+      const response = await api.getAIProviders() as any;
+      if (response.success && response.data) {
+        setProviders(response.data);
+        // Build models list from providers
+        const modelsList = buildModelsList(response.data);
+        console.log('[loadProviders] System models loaded:', modelsList);
+
+        // 使用函数式更新来合并系统模型和当前状态中的自定义模型
+        setModels(prevModels => {
+          const customModels = prevModels.filter(m => m.isCustom);
+          console.log('[loadProviders] Current custom models:', customModels);
+          return [...modelsList, ...customModels];
+        });
+      }
+    } catch (error) {
+      console.error('Error loading providers:', error);
+    } finally {
+      setLoadingProviders(false);
+    }
+  };
+
+  const loadConversationHistory = async () => {
+    try {
+      setLoadingConversations(true);
+      const response = await api.getAIConversations() as any;
+      if (response.success && Array.isArray(response.data)) {
+        setConversations(response.data);
+        // Cache to IndexedDB using clear-and-replace to ensure deleted items are removed
+        await indexedDB.clearAndCacheConversations(response.data);
+        console.log('[loadConversationHistory] Conversations synced to IndexedDB:', response.data.length);
+      }
+    } catch (error) {
+      console.error('Error loading conversations:', error);
+      // Fallback to IndexedDB if API fails
+      try {
+        const cachedConversations = await indexedDB.getConversations();
+        if (cachedConversations.length > 0) {
+          setConversations(cachedConversations);
+          console.log('[loadConversationHistory] Loaded from IndexedDB cache:', cachedConversations.length);
+        }
+      } catch (cacheError) {
+        console.error('Failed to load from IndexedDB:', cacheError);
+      }
+    } finally {
+      setLoadingConversations(false);
+    }
+  };
+
+  // 过滤和排序对话
+  const filteredConversations = useMemo(() => {
+    let filtered = conversations;
+
+    if (searchQuery) {
+      filtered = filtered.filter(conv =>
+        conv.title?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    filtered = [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'updated':
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        case 'created':
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        case 'name':
+          return (a.title || '').localeCompare(b.title || '');
+        case 'messages':
+          return (b.messageCount || 0) - (a.messageCount || 0);
+        default:
+          return 0;
+      }
+    });
+
+    return filtered;
+  }, [conversations, searchQuery, sortBy]);
+
+  // 模型操作处理器
+  const handleSaveModel = async (data: any) => {
+    try {
+      if (editingModel) {
+        // Update existing model in database
+        if (editingModel.isCustom) {
+          const response = await api.updateAIModel(editingModel.id, data) as any;
+          if (response.success && response.data) {
+            await indexedDB.cacheAIModel(response.data);
+          }
+        }
+        const updatedModels = models.map(m => m.id === editingModel.id ? { ...m, ...data, isCustom: m.isCustom || true } : m);
+        setModels(updatedModels);
+      } else {
+        // Create new model in database
+        const response = await api.createAIModel({
+          name: data.name,
+          modelId: data.modelId,
+          provider: data.provider,
+          popularity: data.popularity || 50,
+          speed: data.speed,
+          cost: data.cost,
+          context: data.context,
+          description: data.desc,
+        }) as any;
+        const newModel = {
+          ...data,
+          id: response.data?.id || Date.now().toString(),
+          isCustom: true
+        };
+        // Cache to IndexedDB
+        if (response.success && response.data) {
+          await indexedDB.cacheAIModel(response.data);
+        }
+        setModels([...models, newModel]);
+      }
+      setShowModelForm(false);
+      setEditingModel(null);
+    } catch (error) {
+      console.error('Failed to save model:', error);
+      alert('Failed to save model. Please try again.');
+    }
+  };
+
+  const handleDeleteModel = async (modelId: string) => {
+    if (confirm('Are you sure you want to delete this model?')) {
+      try {
+        // Delete from database if it's a custom model
+        const modelToDelete = models.find(m => m.id === modelId);
+        console.log('[AIDashboard] Deleting model:', modelId, 'isCustom:', modelToDelete?.isCustom);
+        
+        if (modelToDelete?.isCustom) {
+          const response = await api.deleteAIModel(modelId) as any;
+          console.log('[AIDashboard] Delete API response:', response);
+          
+          if (!response.success) {
+            throw new Error(response?.message || 'Failed to delete model from server');
+          }
+          
+          // Remove from IndexedDB cache to ensure sync consistency
+          await indexedDB.removeAIModel(modelId);
+          console.log('[AIDashboard] Model removed from IndexedDB');
+        }
+        // Update local state
+        const updatedModels = models.filter(m => m.id !== modelId);
+        setModels(updatedModels);
+        console.log('[AIDashboard] Local state updated, remaining models:', updatedModels.length);
+      } catch (error) {
+        console.error('Failed to delete model:', error);
+        alert('Failed to delete model. Please try again.');
+      }
+    }
+  };
+
+  // 助手操作处理器
+  const handleSaveAssistant = async (data: any) => {
+    try {
+      if (editingAssistant) {
+        const response = await api.updateAIAssistant(editingAssistant.id, data) as any;
+        if (response.success && response.data) {
+          await indexedDB.cacheAIAssistant(response.data);
+        }
+        const updatedAssistants = assistants.map(a =>
+          a.id === editingAssistant.id ? { ...a, ...data, isCustom: a.isCustom || true } : a
+        );
+        setAssistants(updatedAssistants);
+      } else {
+        const response = await api.createAIAssistant({
+          ...data,
+          isSystem: false
+        }) as any;
+        
+        if (response.success && response.data) {
+          await indexedDB.cacheAIAssistant(response.data);
+        }
+
+        const newAssistant: AIAssistant = { 
+          ...data, 
+          id: response.data?.id || Date.now().toString(), 
+          isSystem: false, 
+          isCustom: true, 
+          usageCount: 0 
+        };
+        setAssistants([...assistants, newAssistant]);
+      }
+      setShowAssistantForm(false);
+      setEditingAssistant(null);
+      
+      loadCustomModelsAndAssistants();
+    } catch (error) {
+      console.error('Failed to save assistant:', error);
+      alert('Failed to save assistant. Please try again.');
+    }
+  };
+
+  const handleDeleteAssistant = async (assistantId: string) => {
+    if (confirm('Are you sure you want to delete this assistant?')) {
+      try {
+        const assistantToDelete = assistants.find(a => a.id === assistantId);
+        console.log('[AIDashboard] Deleting assistant:', assistantId, 'isCustom:', assistantToDelete?.isCustom);
+        
+        if (assistantToDelete?.isCustom) {
+          const response = await api.deleteAIAssistant(assistantId) as any;
+          console.log('[AIDashboard] Delete assistant API response:', response);
+          
+          if (!response.success) {
+            throw new Error(response?.message || 'Failed to delete assistant from server');
+          }
+          
+          await indexedDB.removeAIAssistant(assistantId);
+          console.log('[AIDashboard] Assistant removed from IndexedDB');
+        }
+        
+        const updatedAssistants = assistants.filter(a => a.id !== assistantId);
+        setAssistants(updatedAssistants);
+        console.log('[AIDashboard] Local state updated, remaining assistants:', updatedAssistants.length);
+      } catch (error) {
+        console.error('Failed to delete assistant:', error);
+        alert('Failed to delete assistant. Please try again.');
+      }
+    }
+  };
+
+  const handleSelectAssistant = (assistant: AIAssistant) => {
+    setCurrentAssistant(assistant);
+    setActiveTab('Chat');
+    // If we switch assistant, it's like a new chat with that specific persona
+    handleNewChat(assistant);
+  };
+
+  const handleNewChat = async (assistant?: AIAssistant) => {
+    const targetAssistant = assistant || currentAssistant;
+    console.log('[AIDashboard] handleNewChat called with assistant:', targetAssistant?.name);
+    
+    try {
+      // Create a new conversation in the backend
+      console.log('[AIDashboard] Creating new conversation via API...');
+      const response = await api.createAIConversation(targetAssistant.name) as any;
+      console.log('[AIDashboard] API response:', response);
+      
+      if (response.success && response.data) {
+        const newConversation = response.data;
+        console.log('[AIDashboard] New conversation created:', newConversation.id);
+        
+        // Cache to IndexedDB
+        try {
+          await indexedDB.cacheConversation(newConversation);
+          console.log('[AIDashboard] Conversation cached to IndexedDB');
+        } catch (cacheError) {
+          console.warn('Failed to cache new conversation to IndexedDB:', cacheError);
+        }
+        
+        // Add to conversations list at the top
+        setConversations(prev => [newConversation, ...prev]);
+        
+        // Set as current conversation
+        setCurrentConversationId(newConversation.id);
+        
+        // Initialize with greeting message
+        setChatMessages([
+          {
+            role: 'model',
+            text: `Hello! I'm your ${targetAssistant.name}. ${targetAssistant.description} How can I help you today?`,
+            suggestions: [
+              { icon: 'edit_note', label: 'Help me write a note' },
+              { icon: 'lightbulb', label: 'Brainstorm some ideas' },
+              { icon: 'summarize', label: 'Summarize my recent work' }
+            ]
+          }
+        ]);
+        
+        setActiveTab('Chat');
+      } else {
+        console.error('[AIDashboard] API returned unsuccessful response:', response);
+        throw new Error(response?.message || 'Failed to create conversation');
+      }
+    } catch (error) {
+      console.error('[AIDashboard] Error creating new conversation:', error);
+      // Fallback to local-only mode if API fails
+      setCurrentConversationId(null);
+      setChatMessages([
+        {
+          role: 'model',
+          text: `Hello! I'm your ${targetAssistant.name}. ${targetAssistant.description} How can I help you today?`,
+          suggestions: [
+            { icon: 'edit_note', label: 'Help me write a note' },
+            { icon: 'lightbulb', label: 'Brainstorm some ideas' },
+            { icon: 'summarize', label: 'Summarize my recent work' }
+          ]
+        }
+      ]);
+      setActiveTab('Chat');
+    }
+  };
+
+  const handleSelectConversation = async (conversation: any) => {
+    console.log('[AIDashboard] handleSelectConversation called:', {
+      conversationId: conversation.id,
+      conversationTitle: conversation.title
+    });
+    try {
+      setCurrentConversationId(conversation.id);
+      setActiveTab('Chat');
+      console.log('[AIDashboard] Fetching conversation messages...');
+      const response = await api.getAIConversation(conversation.id) as any;
+      console.log('[AIDashboard] API response:', response);
+      if (response.success && response.data) {
+        // Map backend messages to ChatMessage interface
+        // Backend uses 'assistant', frontend uses 'model' (based on types.ts and current implementation)
+        const messages = response.data.messages.map((m: any) => ({
+          role: m.role === 'assistant' ? 'model' : m.role,
+          text: m.content
+        }));
+        console.log('[AIDashboard] Setting chat messages:', messages);
+        setChatMessages(messages);
+      } else {
+        console.warn('[AIDashboard] No messages data in response');
+      }
+    } catch (error) {
+      console.error('Error loading conversation messages:', error);
+    }
+  };
+
+  // Chat 操作处理器
+  const handleSendMessage = async () => {
+    if (!inputText.trim() || isGenerating) return;
+
+    const userMessage = inputText;
+    setInputText('');
+    setAttachments([]);
+    setIsGenerating(true);
+    stopSignalRef.current = false;
+
+    const newUserMessage: ChatMessage = { role: 'user', text: userMessage };
+    const aiPlaceholderMsg: ChatMessage = { role: 'model', text: '' };
+    const updatedMessages = [...chatMessages, newUserMessage, aiPlaceholderMsg];
+    setChatMessages(updatedMessages);
+
+    // Determine provider and model from current assistant
+    let provider: any = 'GEMINI';
+    let model = 'gemini-1.5-flash';
+
+    if (currentAssistant.model) {
+      // Find the model in database models to get the provider
+      const dbModel = models.find((m: any) => m.modelId === currentAssistant.model);
+      if (dbModel) {
+        provider = dbModel.provider;
+        model = dbModel.modelId;
+        console.log('[AIDashboard] Using assistant model config:', { provider, model });
+      }
+    }
+
+    // Build messages for API - exclude the AI placeholder
+    const messagesForApi = updatedMessages.slice(0, -1);
+    const requestData = {
+      provider,
+      conversationId: currentConversationId || undefined,
+      messages: messagesForApi.map(m => ({
+        role: (m.role === 'model' ? 'assistant' : m.role) as any,
+        content: m.text
+      })),
+      options: {
+        model
+      }
+    };
+
+    console.log('[AIDashboard] Sending streaming chat request:', JSON.stringify(requestData, null, 2));
+
+    try {
+      // Use streaming API
+      let accumulatedText = '';
+      let finalConversationId: string | undefined;
+
+      const controller = await api.chatAIStream(
+        requestData,
+        // onChunk callback
+        (chunk, _done, conversationId) => {
+          accumulatedText += chunk;
+          finalConversationId = conversationId;
+
+          setChatMessages(prev => {
+            const newMessages = [...prev];
+            const lastMsgIndex = newMessages.length - 1;
+            newMessages[lastMsgIndex] = { ...newMessages[lastMsgIndex], text: accumulatedText };
+            return newMessages;
+          });
+        },
+        // onComplete callback
+        (conversationId) => {
+          console.log('[AIDashboard] Stream complete, conversationId:', conversationId);
+        },
+        // onError callback
+        (error) => {
+          console.error('[AIDashboard] Stream error:', error);
+          setChatMessages(prev => {
+            const newMessages = [...prev];
+            const lastMsgIndex = newMessages.length - 1;
+            newMessages[lastMsgIndex] = {
+              ...newMessages[lastMsgIndex],
+              text: 'Sorry, I encountered an error. Please try again.'
+            };
+            return newMessages;
+          });
+        }
+      );
+
+      streamAbortControllerRef.current = controller;
+
+      // Wait for stream to complete
+      await new Promise<void>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (controller.signal.aborted || stopSignalRef.current) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100);
+
+        // Also set a timeout to avoid hanging
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          resolve();
+        }, 120000); // 2 minute timeout
+      });
+
+      // Update or create conversation
+      if (!currentConversationId && finalConversationId) {
+        setCurrentConversationId(finalConversationId);
+        loadConversationHistory();
+      } else {
+        loadConversationHistory();
+      }
+    } catch (error) {
+      console.error('[AIDashboard] Error sending message:', error);
+      setChatMessages(prev => {
+        const newMessages = [...prev];
+        const lastMsgIndex = newMessages.length - 1;
+        newMessages[lastMsgIndex] = {
+          ...newMessages[lastMsgIndex],
+          text: 'Sorry, I encountered an error. Please try again.'
+        };
+        return newMessages;
+      });
+    } finally {
+      setIsGenerating(false);
+      stopSignalRef.current = false;
+      streamAbortControllerRef.current = null;
+    }
+  };
+
+  const handleStopGeneration = () => {
+    stopSignalRef.current = true;
+    if (streamAbortControllerRef.current) {
+      streamAbortControllerRef.current.abort();
+      streamAbortControllerRef.current = null;
+    }
+    setIsGenerating(false);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setAttachments(prev => [...prev, ...Array.from(e.target.files!)]);
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setAttachments(prev => [...prev, ...Array.from(e.target.files!)]);
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleVoiceInput = () => {
+    console.log('Voice input not implemented yet');
+  };
+
+  const handleRenameConversation = (conversationId: string) => {
+    const newTitle = prompt('Enter new title:');
+    if (newTitle) {
+      setConversations(prev =>
+        prev.map(c => c.id === conversationId ? { ...c, title: newTitle } : c)
+      );
+    }
+  };
+
+  const handleDeleteConversation = async (conversationId: string) => {
+    if (confirm('Are you sure you want to delete this conversation?')) {
+      try {
+        console.log('[AIDashboard] Deleting conversation:', conversationId);
+        const response = await api.deleteAIConversation(conversationId) as any;
+        console.log('[AIDashboard] Delete conversation API response:', response);
+        
+        if (!response.success) {
+          throw new Error(response?.message || 'Failed to delete conversation from server');
+        }
+        
+        // Remove from IndexedDB cache to ensure sync consistency
+        await indexedDB.removeConversation(conversationId);
+        console.log('[AIDashboard] Conversation removed from IndexedDB');
+        
+        setConversations(prev => prev.filter(c => c.id !== conversationId));
+        if (currentConversationId === conversationId) {
+          setCurrentConversationId(null);
+          setChatMessages([]);
+        }
+        console.log('[AIDashboard] Local state updated');
+      } catch (error) {
+        console.error('Error deleting conversation:', error);
+        alert('Failed to delete conversation. Please try again.');
+      }
+    }
+  };
+
+  const buildModelsList = (providersData: any) => {
+    // Model descriptions are only used when loading from providers API
+    // All models are now loaded from database - no hardcoded defaults
+    const modelDescriptions: Record<string, any> = {
+      'gemini-2.0-flash-exp': { name: 'Gemini 2.0 Flash', desc: 'Latest Gemini model with improved reasoning', speed: 'Ultra Fast', cost: '$', context: '1M' },
+      'gemini-1.5-pro': { name: 'Gemini 1.5 Pro', desc: 'Best for complex reasoning & coding', speed: 'Fast', cost: '$', context: '2M' },
+      'gemini-1.5-flash': { name: 'Gemini 1.5 Flash', desc: 'Lightning fast for daily tasks', speed: 'Ultra Fast', cost: '$', context: '1M' },
+      'claude-sonnet-4-20250514': { name: 'Claude Sonnet 4', desc: 'Latest Claude model with enhanced capabilities', speed: 'Fast', cost: '$', context: '200K' },
+      'claude-3-5-sonnet-20241022': { name: 'Claude 3.5 Sonnet', desc: 'Excellent at creative writing', speed: 'Moderate', cost: '$', context: '200K' },
+      'claude-3-haiku-20240307': { name: 'Claude 3 Haiku', desc: 'Fast and efficient for simple tasks', speed: 'Ultra Fast', cost: '$', context: '200K' },
+      'gpt-4o': { name: 'GPT-4o', desc: 'Versatile problem solver', speed: 'Fast', cost: '$', context: '128K' },
+      'gpt-4o-mini': { name: 'GPT-4o Mini', desc: 'Efficient and cost-effective', speed: 'Ultra Fast', cost: '$', context: '128K' },
+      'gpt-3.5-turbo': { name: 'GPT-3.5 Turbo', desc: 'Fast and reliable', speed: 'Ultra Fast', cost: '$', context: '16K' },
+      'llama3.2': { name: 'Llama 3.2', desc: 'Open-source model via Ollama', speed: 'Moderate', cost: 'Free', context: '8K' },
+      'mistral': { name: 'Mistral', desc: 'Efficient open-source model', speed: 'Fast', cost: 'Free', context: '32K' },
+      'codellama': { name: 'Code Llama', desc: 'Specialized for code generation', speed: 'Moderate', cost: 'Free', context: '16K' },
+      'phi3': { name: 'Phi 3', desc: 'Lightweight and efficient', speed: 'Ultra Fast', cost: 'Free', context: '4K' },
+      'local-model': { name: 'Local Model', desc: 'Custom model via LM Studio', speed: 'Variable', cost: 'Free', context: 'Variable' },
+    };
+
+    const modelsList: any[] = [];
+    
+    if (providersData.providers) {
+      providersData.providers.forEach((provider: any) => {
+        // Add default model for each provider
+        const defaultModel = provider.defaultModel;
+        if (defaultModel && modelDescriptions[defaultModel]) {
+          modelsList.push({
+            id: defaultModel,
+            provider: provider.name,
+            ...modelDescriptions[defaultModel]
+          });
+        }
+      });
+    }
+
+    // Return empty array if no models from providers - models will be loaded from database
+    return modelsList;
+  };
 
   const renderContent = () => {
     switch(activeTab) {
       case 'Models':
         return (
            <div className="p-12 max-w-6xl mx-auto w-full animate-in slide-in-from-bottom-4 duration-300">
-            <h2 className="text-2xl font-bold mb-6">Available Models</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {models.map(model => (
-                <div key={model.id} className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:shadow-xl hover:border-primary/50 transition-all cursor-pointer group">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="size-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <span className="material-symbols-outlined">neurology</span>
-                    </div>
-                    <span className="px-3 py-1 bg-gray-100 dark:bg-gray-800 rounded-lg text-xs font-bold text-gray-500">{model.speed}</span>
-                  </div>
-                  <h3 className="text-lg font-bold mb-1">{model.name}</h3>
-                  <p className="text-sm text-gray-500 mb-6">{model.desc}</p>
-                  <div className="flex items-center gap-4 text-xs font-medium text-gray-400 border-t border-gray-100 dark:border-gray-800 pt-4">
-                    <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">memory</span> {model.context} Context</span>
-                    <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">payments</span> {model.cost}</span>
-                  </div>
-                </div>
-              ))}
+            {/* 标题栏 - 添加新增按钮 */}
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold">Available Models</h2>
+              <button
+                onClick={() => {
+                  setEditingModel(null);
+                  setShowModelForm(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all"
+              >
+                <span className="material-symbols-outlined">add</span>
+                Add Model
+              </button>
             </div>
+
+            {loadingProviders ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
+                  <p className="text-gray-500">Loading models...</p>
+                </div>
+              </div>
+            ) : models.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="size-20 rounded-full bg-primary/10 flex items-center justify-center mb-6">
+                  <span className="material-symbols-outlined text-4xl text-primary">neurology</span>
+                </div>
+                <h3 className="text-xl font-bold mb-2">No Models Available</h3>
+                <p className="text-gray-500 mb-6 max-w-md">
+                  You haven't added any AI models yet. Click the button below to add your first custom model.
+                </p>
+                <button
+                  onClick={() => {
+                    setEditingModel(null);
+                    setShowModelForm(true);
+                  }}
+                  className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all"
+                >
+                  <span className="material-symbols-outlined">add</span>
+                  Add Your First Model
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {models.map(model => (
+                  <div key={model.id} className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:shadow-xl hover:border-primary/50 transition-all cursor-pointer group relative">
+                    {/* 编辑/删除按钮 - 悬停显示 */}
+                    <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingModel(model);
+                          setShowModelForm(true);
+                        }}
+                        className="p-1.5 bg-white dark:bg-gray-800 hover:bg-primary hover:text-white rounded-lg transition-colors shadow-sm"
+                        title="Edit model"
+                      >
+                        <span className="material-symbols-outlined text-sm">edit</span>
+                      </button>
+                      {model.isCustom && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteModel(model.id);
+                          }}
+                          className="p-1.5 bg-white dark:bg-gray-800 hover:bg-red-500 hover:text-white rounded-lg transition-colors shadow-sm"
+                          title="Delete model"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between items-start mb-4 pr-16">
+                      <div className="size-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <span className="material-symbols-outlined">neurology</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-3 py-1 bg-gray-100 dark:bg-gray-800 rounded-lg text-xs font-bold text-gray-500">{model.speed}</span>
+                        {model.isCustom && (
+                          <span className="px-2 py-1 bg-primary/10 text-primary rounded-lg text-xs font-bold">Custom</span>
+                        )}
+                      </div>
+                    </div>
+                    <h3 className="text-lg font-bold mb-1">{model.name}</h3>
+                    <p className="text-sm text-gray-500 mb-4">{model.desc}</p>
+                    <div className="flex items-center gap-4 text-xs font-medium text-gray-400 border-t border-gray-100 dark:border-gray-800 pt-4">
+                      <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">memory</span> {model.context} Context</span>
+                      <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">payments</span> {model.cost}</span>
+                    </div>
+                    {/* 热度指示器 */}
+                    {model.popularity !== undefined && (
+                      <div className="flex items-center gap-1 mt-2">
+                        <span className="text-[10px] text-gray-400">Popularity:</span>
+                        <div className="flex gap-0.5">
+                          {[...Array(5)].map((_, i) => (
+                            <span
+                              key={i}
+                              className={`material-symbols-outlined text-[10px] ${
+                                i < Math.ceil(model.popularity / 20)
+                                  ? 'text-yellow-400'
+                                  : 'text-gray-300'
+                              }`}
+                            >
+                              star
+                            </span>
+                          ))}
+                        </div>
+                        <span className="text-[10px] text-gray-400 ml-1">({model.popularity})</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
            </div>
         );
       case 'Assistants':
         return (
           <div className="p-12 max-w-6xl mx-auto w-full animate-in slide-in-from-bottom-4 duration-300">
-            <h2 className="text-2xl font-bold mb-6">Specialized Assistants</h2>
+            {/* 标题栏 - 添加新增按钮 */}
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold">Specialized Assistants</h2>
+              <button
+                onClick={() => {
+                  setEditingAssistant(null);
+                  setShowAssistantForm(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all"
+              >
+                <span className="material-symbols-outlined">add</span>
+                Create Assistant
+              </button>
+            </div>
+
+            {assistants.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="size-20 rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center mb-6">
+                  <span className="material-symbols-outlined text-4xl text-primary">smart_toy</span>
+                </div>
+                <h3 className="text-xl font-bold mb-2">No Assistants Available</h3>
+                <p className="text-gray-500 mb-6 max-w-md">
+                  You haven't created any AI assistants yet. Click the button below to create your first custom assistant with a specialized role.
+                </p>
+                <button
+                  onClick={() => {
+                    setEditingAssistant(null);
+                    setShowAssistantForm(true);
+                  }}
+                  className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all"
+                >
+                  <span className="material-symbols-outlined">add</span>
+                  Create Your First Assistant
+                </button>
+              </div>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {assistants.map(agent => (
-                <div key={agent.id} className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer text-center">
+                <div key={agent.id} className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer text-center group relative">
+                  {/* 编辑/删除按钮 - 只对自定义助手显示删除按钮 */}
+                  <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingAssistant(agent);
+                        setShowAssistantForm(true);
+                      }}
+                      className="p-1.5 bg-white dark:bg-gray-800 hover:bg-primary hover:text-white rounded-lg transition-colors shadow-sm"
+                      title="Edit assistant"
+                    >
+                      <span className="material-symbols-outlined text-sm">edit</span>
+                    </button>
+                    {agent.isCustom && !agent.isSystem && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteAssistant(agent.id);
+                        }}
+                        className="p-1.5 bg-white dark:bg-gray-800 hover:bg-red-500 hover:text-white rounded-lg transition-colors shadow-sm"
+                        title="Delete assistant"
+                      >
+                        <span className="material-symbols-outlined text-sm">delete</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 系统助手标签 */}
+                  {agent.isSystem && (
+                    <div className="absolute top-4 left-4">
+                      <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 text-[10px] font-bold rounded-lg">
+                        System
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 自定义助手标签 */}
+                  {agent.isCustom && !agent.isSystem && (
+                    <div className="absolute top-4 left-4">
+                      <span className="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded-lg">
+                        Custom
+                      </span>
+                    </div>
+                  )}
+
                   <div className="size-20 mx-auto rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center mb-4">
                     <span className="material-symbols-outlined text-4xl text-primary">{agent.avatar}</span>
                   </div>
                   <h3 className="text-lg font-bold">{agent.name}</h3>
                   <span className="inline-block px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3 mt-1">{agent.role}</span>
-                  <p className="text-sm text-gray-500">{agent.desc}</p>
-                  <button className="mt-6 w-full py-2 rounded-xl bg-primary/10 text-primary text-sm font-bold hover:bg-primary hover:text-white transition-all">Start Chat</button>
+                  <p className="text-sm text-gray-500 line-clamp-2">{agent.description}</p>
+                  <button
+                    onClick={() => handleSelectAssistant(agent)}
+                    className="mt-6 w-full py-2 rounded-xl bg-primary/10 text-primary text-sm font-bold hover:bg-primary hover:text-white transition-all"
+                  >
+                    Start Chat
+                  </button>
                 </div>
               ))}
             </div>
+            )}
           </div>
         );
       case 'Chat':
@@ -105,7 +1000,7 @@ const AIDashboard: React.FC = () => {
           <>
             <main className="flex-1 overflow-y-auto p-12 scrollbar-hide w-full animate-in fade-in duration-300">
               <div className="max-w-4xl mx-auto space-y-10">
-                {messages.map((msg, idx) => (
+                {chatMessages.map((msg, idx) => (
                   <div key={idx} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                     <div className={`size-10 rounded-xl flex items-center justify-center shrink-0 ${
                       msg.role === 'model' ? 'bg-primary/10 text-primary' : 'bg-amber-100 border-2 border-amber-200'
@@ -145,7 +1040,11 @@ const AIDashboard: React.FC = () => {
                       {msg.suggestions && (
                         <div className="flex gap-3">
                           {msg.suggestions.map((s) => (
-                            <button key={s.label} className="flex items-center gap-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-xs font-bold hover:shadow-md hover:border-primary/50 transition-all">
+                            <button 
+                              key={s.label} 
+                              onClick={() => setInputText(s.label)}
+                              className="flex items-center gap-2 px-4 py-3 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-xs font-bold hover:shadow-md hover:border-primary/50 transition-all"
+                            >
                               <span className="material-symbols-outlined text-primary text-lg">{s.icon}</span>
                               {s.label}
                             </button>
@@ -170,36 +1069,135 @@ const AIDashboard: React.FC = () => {
               </div>
             </main>
 
-            {/* Input Bar */}
+            {/* Input Bar - 增强版 */}
             <div className="p-8 w-full">
               <div className="max-w-4xl mx-auto">
-                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-3xl p-4 shadow-xl shadow-gray-200/20 dark:shadow-none flex flex-col gap-4">
-                  <textarea 
-                    rows={2}
-                    className="w-full bg-transparent border-none focus:ring-0 text-gray-800 dark:text-gray-100 placeholder-gray-400 resize-none p-2"
-                    placeholder="Message your AI Assistant..."
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                  />
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <button className="p-2 text-gray-400 hover:text-primary transition-colors">
-                        <span className="material-symbols-outlined">attach_file</span>
-                      </button>
-                      <button className="p-2 text-gray-400 hover:text-primary transition-colors">
-                        <span className="material-symbols-outlined">image</span>
-                      </button>
-                      <button className="p-2 text-gray-400 hover:text-primary transition-colors">
-                        <span className="material-symbols-outlined">mic</span>
-                      </button>
-                    </div>
-                    <button className="size-12 bg-primary text-white rounded-2xl flex items-center justify-center shadow-lg shadow-primary/30 hover:bg-primary/90 transition-all">
-                      <span className="material-symbols-outlined">send</span>
+                {/* 当前模型和助手信息 */}
+                <div className="flex items-center justify-between mb-3 px-2">
+                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <span className="material-symbols-outlined text-sm">smart_toy</span>
+                    <span>Gemini 2.0 Flash</span>
+                    <span>•</span>
+                    <span className="material-symbols-outlined text-sm">auto_awesome</span>
+                    <span>{currentAssistant.name}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setActiveTab('Assistants')}
+                      className="flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg text-xs hover:border-primary/50 transition-all"
+                      title="Change assistant"
+                    >
+                      <span className="material-symbols-outlined text-sm">swap_horiz</span>
+                      Change
                     </button>
                   </div>
                 </div>
+
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-3xl p-4 shadow-xl shadow-gray-200/20 dark:shadow-none">
+                  {/* 文本输入区 */}
+                  <textarea
+                    rows={2}
+                    className="w-full bg-transparent border-none focus:ring-0 text-gray-800 dark:text-gray-100 placeholder-gray-400 resize-none p-2 pr-24"
+                    placeholder="Message your AI Assistant..."
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                  />
+
+                  {/* 工具栏 */}
+                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
+                    <div className="flex items-center gap-1">
+                      {/* 附件按钮 */}
+                      <input
+                        type="file"
+                        id="file-upload"
+                        className="hidden"
+                        multiple
+                        onChange={handleFileUpload}
+                      />
+                      <label
+                        htmlFor="file-upload"
+                        className="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors cursor-pointer"
+                        title="Attach files"
+                      >
+                        <span className="material-symbols-outlined">attach_file</span>
+                      </label>
+
+                      {/* 图片按钮 */}
+                      <input
+                        type="file"
+                        id="image-upload"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={handleImageUpload}
+                      />
+                      <label
+                        htmlFor="image-upload"
+                        className="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors cursor-pointer"
+                        title="Upload image"
+                      >
+                        <span className="material-symbols-outlined">image</span>
+                      </label>
+
+                      {/* 语音按钮 */}
+                      <button
+                        className="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                        title="Voice input"
+                        onClick={handleVoiceInput}
+                      >
+                        <span className="material-symbols-outlined">mic</span>
+                      </button>
+                    </div>
+
+                    {/* 发送/停止按钮 */}
+                    {isGenerating ? (
+                      <button
+                        onClick={handleStopGeneration}
+                        className="px-4 h-10 bg-red-500 text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-red-600 transition-all shadow-lg shadow-red-500/20"
+                      >
+                        <span className="material-symbols-outlined">stop</span>
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleSendMessage}
+                        disabled={!inputText.trim()}
+                        className="px-4 h-10 bg-primary text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed disabled:shadow-none"
+                      >
+                        <span className="material-symbols-outlined">send</span>
+                        Send
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 附件预览区 */}
+                  {attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3 p-2 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
+                      {attachments.map((file, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-xs"
+                        >
+                          <span className="material-symbols-outlined text-sm text-primary">description</span>
+                          <span className="max-w-[150px] truncate">{file.name}</span>
+                          <button
+                            onClick={() => removeAttachment(index)}
+                            className="p-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                          >
+                            <span className="material-symbols-outlined text-sm text-gray-400">close</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <p className="text-center text-[10px] text-gray-400 mt-4">
-                  Powered by GPT-4o. Always check important information.
+                  Powered by multiple AI providers. Always check important information.
                 </p>
               </div>
             </div>
@@ -209,45 +1207,159 @@ const AIDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex overflow-hidden bg-white dark:bg-[#0c1419]">
-      {/* Left History Sidebar - Only visible in Chat mode */}
+    <>
+      {/* 模型表单 */}
+      {showModelForm && (
+        <ModelForm
+          model={editingModel}
+          onSave={handleSaveModel}
+          onClose={() => {
+            setShowModelForm(false);
+            setEditingModel(null);
+          }}
+        />
+      )}
+
+      {/* 助手表单 */}
+      {showAssistantForm && (
+        <AssistantForm
+          assistant={editingAssistant}
+          onSave={handleSaveAssistant}
+          onClose={() => {
+            setShowAssistantForm(false);
+            setEditingAssistant(null);
+          }}
+        />
+      )}
+
+      <div className="flex-1 flex overflow-hidden bg-white dark:bg-[#0c1419]">
+        {/* Left History Sidebar - Only visible in Chat mode */}
       {activeTab === 'Chat' && (
         <aside className="w-72 border-r border-gray-100 dark:border-gray-800 flex flex-col bg-gray-50/20 dark:bg-background-dark/50 shrink-0">
           <div className="p-4 border-b border-gray-100 dark:border-gray-800">
-            <button className="w-full py-3 bg-primary text-white rounded-xl font-bold text-sm shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2">
+            <button 
+              onClick={() => handleNewChat()}
+              className="w-full py-3 bg-primary text-white rounded-xl font-bold text-sm shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2"
+            >
               <span className="material-symbols-outlined">add</span> New Chat
             </button>
           </div>
+
+          {/* 搜索和排序 */}
+          <div className="p-4 border-b border-gray-100 dark:border-gray-800 space-y-3">
+            {/* 搜索框 */}
+            <div className="relative">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
+                search
+              </span>
+              <input
+                type="text"
+                placeholder="Search conversations..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 bg-white dark:bg-[#1c2b33] border border-gray-200 dark:border-gray-700 rounded-lg text-xs focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+              />
+            </div>
+
+            {/* 排序选项 */}
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                Sort by:
+              </span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="px-2 py-1 bg-white dark:bg-[#1c2b33] border border-gray-200 dark:border-gray-700 rounded-lg text-xs focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+              >
+                <option value="updated">Recent</option>
+                <option value="created">Created</option>
+                <option value="name">Name</option>
+                <option value="messages">Messages</option>
+              </select>
+            </div>
+          </div>
+
+          {/* 对话列表 */}
           <div className="flex-1 overflow-y-auto p-4 scrollbar-hide">
-            <div className="mb-6">
-              <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4">Today</h3>
+            {loadingConversations ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="text-center">
+                  <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary mb-2"></div>
+                  <p className="text-xs text-gray-400">Loading...</p>
+                </div>
+              </div>
+            ) : filteredConversations.length > 0 ? (
               <div className="space-y-2">
-                {chatHistory.slice(0, 2).map((item) => (
-                  <div 
-                    key={item.title}
-                    className={`p-3 rounded-xl cursor-pointer transition-all ${
-                      item.active 
-                        ? 'bg-white dark:bg-gray-800 shadow-md border border-gray-100 dark:border-gray-700' 
+                <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center justify-between">
+                  <span>Conversations</span>
+                  <span className="text-gray-500 font-normal">{filteredConversations.length}</span>
+                </h3>
+
+                {filteredConversations.map((conv) => (
+                  <div
+                    key={conv.id}
+                    onClick={() => handleSelectConversation(conv)}
+                    className={`p-3 rounded-xl cursor-pointer transition-all group ${
+                      currentConversationId === conv.id
+                        ? 'bg-primary text-white shadow-md'
                         : 'hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
                     }`}
                   >
-                    <h4 className="text-xs font-bold truncate">{item.title}</h4>
-                    <p className="text-[10px] text-gray-400 mt-1">{item.time}</p>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <h4 className={`text-xs font-bold truncate ${
+                          currentConversationId === conv.id ? 'text-white' : 'text-gray-900 dark:text-gray-100'
+                        }`}>
+                          {conv.title || 'Untitled'}
+                        </h4>
+                        <p className={`text-[10px] mt-1 truncate ${
+                          currentConversationId === conv.id ? 'text-white/70' : 'text-gray-400'
+                        }`}>
+                          {conv.lastMessage || 'No messages yet'}
+                        </p>
+                      </div>
+
+                      {/* 操作按钮（悬停显示） */}
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRenameConversation(conv.id);
+                          }}
+                          className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                          title="Rename"
+                        >
+                          <span className="material-symbols-outlined text-[12px]">edit</span>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteConversation(conv.id);
+                          }}
+                          className="p-1 hover:bg-red-100 dark:hover:bg-red-900 text-red-500 rounded"
+                          title="Delete"
+                        >
+                          <span className="material-symbols-outlined text-[12px]">delete</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className={`text-[9px] mt-2 ${
+                      currentConversationId === conv.id ? 'text-white/50' : 'text-gray-400'
+                    }`}>
+                      {new Date(conv.updatedAt).toLocaleDateString()} • {conv.messageCount || 0} messages
+                    </p>
                   </div>
                 ))}
               </div>
-            </div>
-            <div>
-              <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4">Yesterday</h3>
-              <div className="space-y-2">
-                {chatHistory.slice(2).map((item) => (
-                  <div key={item.title} className="p-3 rounded-xl hover:bg-gray-100/50 dark:hover:bg-gray-800/50 cursor-pointer transition-all">
-                    <h4 className="text-xs font-bold truncate text-gray-600 dark:text-gray-400">{item.title}</h4>
-                    <p className="text-[10px] text-gray-400 mt-1">{item.time}</p>
-                  </div>
-                ))}
+            ) : (
+              <div className="text-center py-8">
+                <span className="material-symbols-outlined text-4xl text-gray-300 dark:text-gray-700">
+                  search_off
+                </span>
+                <p className="text-xs text-gray-400 mt-2">No conversations found</p>
               </div>
-            </div>
+            )}
           </div>
         </aside>
       )}
@@ -281,7 +1393,8 @@ const AIDashboard: React.FC = () => {
           {renderContent()}
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

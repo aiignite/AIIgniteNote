@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Note, NoteType } from '../types';
 import MarkdownEditor from './editors/MarkdownEditor';
 import RichTextEditor from './editors/RichTextEditor';
@@ -15,6 +15,11 @@ interface EditorProps {
 const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
   const [activeMode, setActiveMode] = useState<NoteType>('Markdown');
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Local title state to prevent overwrites from API responses
+  const [localTitle, setLocalTitle] = useState(note?.title || '');
+
   const { t } = useLanguageStore();
 
   // Tag Menu State
@@ -23,12 +28,93 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
   const tagMenuRef = useRef<HTMLDivElement>(null);
   const tagInputRef = useRef<HTMLInputElement>(null);
 
+  // Debounced update ref
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingUpdateRef = useRef<Partial<Note> | null>(null);
+
   // Sync active mode with note type when note changes
   useEffect(() => {
     if (note) {
+      console.log('[Editor] Note changed, setting active mode:', {
+        noteId: note.id,
+        noteType: note.type,
+        noteTitle: note.title,
+        previousMode: activeMode
+      });
       setActiveMode(note.type);
     }
   }, [note?.id, note?.type]);
+
+  // Sync local title when note changes (e.g., when switching between notes)
+  useEffect(() => {
+    if (note) {
+      setLocalTitle(note.title);
+    }
+  }, [note?.id]); // Only sync when note ID changes, not on every render
+
+  // Debounced save function
+  const debouncedUpdate = useCallback((updates: Partial<Note>) => {
+    if (!note) return;
+
+    console.log('[Editor] debouncedUpdate called with updates:', updates);
+    console.log('[Editor] Full note object before update:', {
+      id: note?.id,
+      title: note?.title,
+      contentLength: note?.content?.length || 0,
+      contentType: typeof note?.content
+    });
+
+    // Store pending updates
+    pendingUpdateRef.current = { ...pendingUpdateRef.current, ...updates };
+    setIsSaving(true);
+
+    // Clear existing timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // Set new timer
+    debounceTimerRef.current = setTimeout(() => {
+      if (pendingUpdateRef.current && note) {
+        console.log('[Editor] Triggering onUpdateNote after debounce:', {
+          pendingUpdates: pendingUpdateRef.current,
+          finalContent: pendingUpdateRef.current.content,
+          finalContentLength: pendingUpdateRef.current.content?.length || 0
+        });
+        onUpdateNote({ ...note, ...pendingUpdateRef.current });
+        pendingUpdateRef.current = null;
+        setIsSaving(false);
+      }
+    }, 1000); // 1 second debounce
+  }, [note, onUpdateNote]);
+
+  // Immediate save for certain actions (like tag changes)
+  const immediateUpdate = useCallback((updates: Partial<Note>) => {
+    if (!note) return;
+
+    // Cancel any pending debounced update
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+
+    pendingUpdateRef.current = null;
+    onUpdateNote({ ...note, ...updates });
+  }, [note, onUpdateNote]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        // Save any pending updates (including unsaved title changes)
+        if (pendingUpdateRef.current && note) {
+          console.log('[Editor] Saving pending updates on unmount:', pendingUpdateRef.current);
+          onUpdateNote({ ...note, ...pendingUpdateRef.current });
+        }
+      }
+    };
+  }, [note, onUpdateNote]);
 
   // Detect dark mode from html class
   useEffect(() => {
@@ -77,24 +163,31 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
   }
 
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onUpdateNote({ ...note, title: e.target.value });
+    setLocalTitle(e.target.value); // Update local state immediately
+    debouncedUpdate({ title: e.target.value }); // Still trigger the debounced update
   };
 
   const handleContentChange = (newContent: string) => {
-    onUpdateNote({ ...note, content: newContent });
+    console.log('[Editor] handleContentChange called:', {
+      newContent,
+      newLength: newContent.length,
+      noteId: note?.id,
+      noteType: note?.type,
+      oldContentLength: note?.content?.length || 0
+    });
+    debouncedUpdate({ content: newContent });
   };
 
   const handleAddTag = (tag: string) => {
     const trimmed = tag.trim();
     if (trimmed && !note.tags.includes(trimmed)) {
-      onUpdateNote({ ...note, tags: [...note.tags, trimmed] });
+      immediateUpdate({ tags: [...note.tags, trimmed] });
     }
     setTagInput('');
-    // We keep the menu open if they want to add more, or you could close it: setShowTagMenu(false);
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
-    onUpdateNote({ ...note, tags: note.tags.filter(t => t !== tagToRemove) });
+    immediateUpdate({ tags: note.tags.filter(t => t !== tagToRemove) });
   };
 
   const handleToggleTag = (tag: string) => {
@@ -143,16 +236,28 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote }) => {
                  note.type === 'Mind Map' ? 'account_tree' : 'draw'}
               </span>
             </div>
-            <input 
-              className="w-full max-w-md text-xl font-bold bg-transparent border-none focus:ring-0 text-gray-900 dark:text-white p-0 placeholder-gray-300 truncate"
-              value={note.title}
-              onChange={handleTitleChange}
-              placeholder={t.editor.untitled}
-            />
+             <input
+               className="w-full max-w-md text-xl font-bold bg-transparent border-none focus:ring-0 text-gray-900 dark:text-white p-0 placeholder-gray-300 truncate"
+               value={localTitle}
+               onChange={handleTitleChange}
+               placeholder={t.editor.untitled}
+             />
           </div>
         </div>
         
         <div className="flex items-center gap-3 shrink-0 ml-4">
+          {/* Save Status Indicator */}
+          <div className={`flex items-center gap-1.5 text-xs transition-colors ${
+            isSaving ? 'text-yellow-500' : 'text-green-500'
+          }`}>
+            <span className={`material-symbols-outlined text-[14px] ${isSaving ? 'animate-spin' : ''}`}>
+              {isSaving ? 'autorenew' : 'check_circle'}
+            </span>
+            <span className="hidden sm:inline">
+              {isSaving ? 'Saving...' : 'Saved'}
+            </span>
+          </div>
+
           {/* Tag List Display */}
           <div className="hidden md:flex items-center gap-1.5 overflow-x-auto max-w-[200px] scrollbar-hide">
             {note.tags.map(tag => (

@@ -1,0 +1,560 @@
+// Prisma Schema for AI Ignite Note
+// Converted from ai-ignite-note.sql
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// Enum Types
+// ============================================================
+
+enum NoteType {
+  MARKDOWN
+  RICHTEXT
+  MINDMAP
+  FLOWCHART
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+// ============================================================
+// User Authentication Tables
+// ============================================================
+
+model User {
+  id           String    @id @default(cuid())
+  name         String?
+  email        String?   @unique
+  emailVerified DateTime?
+  image        String?
+  password     String?
+  verificationToken String?
+  verificationTokenExpires DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+  isActive     Boolean   @default(false)
+
+  // Relations
+  accounts     Account[]
+  sessions     Session[]
+  notes        Note[]
+  folders      Folder[]
+  workspaces   Workspace[]        @relation("WorkspaceOwner")
+  workspaceMembers WorkspaceMember[]
+  attachments  Attachment[]
+  noteVersions NoteVersion[]
+  recentSearches RecentSearch[]
+  aiConversations AIConversation[]
+  aiTemplates  AITemplate[]
+  aiAttachments AIAttachment[]
+  aiModels     AIModel[]
+  aiAssistants AIAssistant[]
+  aiFavoriteMessages AIFavoriteMessage[]
+  aiCustomPrompts AICustomPrompt[]
+  settings     UserSettings?
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expires])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================================
+// Workspace Tables
+// ============================================================
+
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  ownerId     String
+  avatar      String?
+  maxMembers  Int      @default(10)
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  owner      User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members    WorkspaceMember[]
+  folders    Folder[]
+  tags       Tag[]
+  notes      Note[]
+  aiConversations AIConversation[]
+  aiTemplates AITemplate[]
+  aiModels    AIModel[]
+  aiAssistants AIAssistant[]
+
+  @@index([ownerId])
+  @@index([isPublic])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String       @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(VIEWER)
+  joinedAt    DateTime     @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("workspace_members")
+}
+
+// ============================================================
+// Folder Tables
+// ============================================================
+
+model Folder {
+  id        String   @id @default(cuid())
+  name      String
+  parentId  String?
+  workspaceId String?
+  authorId  String
+  icon      String   @default("folder")
+  color     String   @default("#6b7280")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  author   User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent   Folder?    @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Folder[]   @relation("FolderHierarchy")
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  notes    Note[]
+
+  @@index([authorId])
+  @@index([parentId])
+  @@index([workspaceId])
+  @@map("folders")
+}
+
+// ============================================================
+// Tag Tables
+// ============================================================
+
+model Tag {
+  id          String   @id @default(cuid())
+  name        String
+  color       String   @default("#6b7280")
+  workspaceId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  noteTags  NoteOnTag[]
+
+  @@unique([name, workspaceId])
+  @@index([workspaceId])
+  @@map("tags")
+}
+
+// ============================================================
+// Note Tables
+// ============================================================
+
+model Note {
+  id          String    @id @default(cuid())
+  title       String
+  type        NoteType  @default(MARKDOWN)
+  authorId    String
+  workspaceId String?
+  folderId    String?
+  isFavorite  Boolean   @default(false)
+  isDeleted   Boolean   @default(false)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  viewCount   Int       @default(0)
+
+  // Relations
+  author    User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  workspace Workspace?     @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  folder    Folder?        @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  content   NoteContent?
+  tags      NoteOnTag[]
+  versions  NoteVersion[]
+  attachments Attachment[]
+
+  @@index([authorId])
+  @@index([workspaceId])
+  @@index([folderId])
+  @@index([isDeleted])
+  @@index([isFavorite])
+  @@index([createdAt(sort: Desc)])
+  @@index([updatedAt(sort: Desc)])
+  @@map("notes")
+}
+
+model NoteContent {
+  id        String   @id @default(cuid())
+  noteId    String   @unique
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@map("note_contents")
+}
+
+model NoteOnTag {
+  noteId String
+  tagId  String
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, tagId])
+  @@map("notes_on_tags")
+}
+
+model NoteVersion {
+  id        String   @id @default(cuid())
+  noteId    String
+  contentId String
+  version   Int
+  changeNote String? @db.Text
+  authorId  String
+  createdAt DateTime @default(now())
+
+  note   Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+  @@index([noteId, version(sort: Desc)])
+  @@map("note_versions")
+}
+
+// ============================================================
+// Attachment Tables
+// ============================================================
+
+model Attachment {
+  id        String   @id @default(cuid())
+  noteId    String
+  fileName  String
+  fileUrl   String
+  fileSize  Int?
+  mimeType  String?
+  fileHash  String?
+  uploadedBy String
+  createdAt DateTime @default(now())
+
+  note  Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  uploader User @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+  @@index([uploadedBy])
+  @@map("attachments")
+}
+
+// ============================================================
+// Recent Search Tables
+// ============================================================
+
+model RecentSearch {
+  id          String   @id @default(cuid())
+  userId      String
+  query       String
+  searchType  String   @default("all")
+  resultCount Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt(sort: Desc)])
+  @@map("recent_searches")
+}
+
+// ============================================================
+// AI Tables
+// ============================================================
+
+enum AIProvider {
+  GEMINI
+  ANTHROPIC
+  OPENAI
+  OLLAMA
+  LMSTUDIO
+}
+
+model AIModel {
+  id          String   @id @default(cuid())
+  name        String
+  modelId     String
+  provider    AIProvider
+  endpoint    String?
+  apiKey      String?
+  popularity  Int      @default(50)
+  isPublic    Boolean  @default(true)
+  isCustom    Boolean  @default(false)
+  speed       String   @default("Fast")
+  cost        String   @default("$")
+  context     String   @default("128K")
+  description String?
+  userId      String?
+  workspaceId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([provider])
+  @@index([isPublic])
+  @@index([isCustom])
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("ai_models")
+}
+
+model AIConversation {
+  id          String     @id @default(cuid())
+  userId      String
+  workspaceId String?
+  title       String?
+  provider    AIProvider @default(GEMINI)
+  model       String     @default("gemini-pro")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // Relations
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace    Workspace?          @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  messages     AIMessage[]
+  tags         AIConversationTag[]
+  favorites    AIFavoriteMessage[]
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("ai_conversations")
+}
+
+model AIMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String
+  content        String   @db.Text
+  tokens         Int?
+  createdAt      DateTime @default(now())
+
+  conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("ai_messages")
+}
+
+model AITemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  prompt      String   @db.Text
+  category    String   @default("General")
+  icon        String   @default("auto_awesome")
+  noteType    NoteType @default(MARKDOWN)
+  isActive    Boolean  @default(true)
+  isPublic    Boolean  @default(false)
+  userId      String?
+  workspaceId String?
+  usageCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([category])
+  @@map("ai_templates")
+}
+
+model AIAttachment {
+  id           String   @id @default(cuid())
+  userId       String
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  filePath     String
+  createdAt    DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt(sort: Desc)])
+  @@map("ai_attachments")
+}
+
+// ============================================================
+// AI Assistant Tables (Custom Assistants)
+// ============================================================
+
+model AIAssistant {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  avatar      String?
+  role        String?
+  category    String?
+  systemPrompt String   @db.Text
+  isSystem    Boolean  @default(false)
+  userId      String
+  workspaceId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([isSystem])
+  @@map("ai_assistants")
+}
+
+model AIConversationTag {
+  id             String  @id @default(cuid())
+  conversationId String
+  tag            String
+  createdAt      DateTime @default(now())
+
+  conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("ai_conversation_tags")
+}
+
+model AIFavoriteMessage {
+  id            String  @id @default(cuid())
+  userId        String
+  messageId     String
+  conversationId String
+  createdAt     DateTime @default(now())
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@index([userId])
+  @@index([conversationId])
+  @@map("ai_favorite_messages")
+}
+
+model AICustomPrompt {
+  id       String   @id @default(cuid())
+  userId   String
+  name     String
+  prompt   String   @db.Text
+  category String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("ai_custom_prompts")
+}
+
+// ============================================================
+// User Settings Tables
+// ============================================================
+
+model UserSettings {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  theme                String    @default("system")
+  defaultNoteType      NoteType  @default(MARKDOWN)
+  aiModelPreference    String?
+  sidebarWidth         Int       @default(380)
+  assistantPanelOpen   Boolean   @default(true)
+  assistantPanelWidth  Int       @default(360)
+  language             String    @default("zh-CN")
+  timezone             String    @default("Asia/Shanghai")
+  notificationsEnabled Boolean   @default(true)
+  autoSaveInterval     Int       @default(30)
+  // AI Provider Settings (stored as JSON)
+  aiProviderSettings   Json?     @default("{}")
+  defaultAIProvider    String?   @default("GOOGLE")
+  defaultAIModel       String?   @default("gemini-2.0-flash-exp")
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}

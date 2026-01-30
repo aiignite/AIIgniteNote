@@ -8,9 +8,10 @@ interface SidebarProps {
   currentView: ViewState;
   onViewChange: (view: ViewState) => void;
   onLogout: () => void;
+  syncStatus?: React.ReactNode;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout, syncStatus }) => {
   const [showQuickProfile, setShowQuickProfile] = useState(false);
   const baseId = useId(); 
   const { getTheme } = useThemeStore();
@@ -20,10 +21,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout }
   const navItems: { id: ViewState; icon: string; label: string; activeColor?: string }[] = [
     { id: 'editor', icon: 'edit_note', label: t.sidebar.documents, activeColor: 'bg-primary' },
     { id: 'templates', icon: 'extension', label: t.sidebar.templates },
-    { id: 'search', icon: 'search', label: t.sidebar.search },
     { id: 'ai-dashboard', icon: 'auto_awesome', label: t.sidebar.aiDashboard },
-    { id: 'favorites', icon: 'star', label: t.sidebar.favorites },
-    { id: 'tags', icon: 'label', label: t.sidebar.tags },
     { id: 'trash', icon: 'delete', label: t.sidebar.trash },
   ];
 
@@ -105,6 +103,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout }
             <span className="material-symbols-outlined">{item.icon}</span>
           </button>
         ))}
+
+        {syncStatus && (
+          <div className="mt-4">
+            {syncStatus}
+          </div>
+        )}
       </div>
 
       <div className="mt-auto flex flex-col gap-6 items-center relative">
@@ -117,26 +121,18 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout }
         </button>
         
         <div className="relative">
-          <div 
+          <div
             onClick={() => setShowQuickProfile(!showQuickProfile)}
-            className="size-8 rounded-full border-2 border-primary cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all relative flex items-center justify-center bg-gray-200 dark:bg-gray-700 overflow-hidden" 
+            className="size-8 rounded-full border-2 border-primary cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all relative flex items-center justify-center bg-gradient-to-br from-primary/20 to-purple-500/20"
           >
-             {/* Fallback Icon */}
-             <span className="material-symbols-outlined text-gray-400 text-lg">person</span>
-             {/* Actual Image Overlay */}
-             <img 
-              src="https://picsum.photos/seed/user/100/100" 
-              className="absolute inset-0 w-full h-full object-cover" 
-              alt="Profile"
-             />
+             <span className="material-symbols-outlined text-primary text-lg">person</span>
           </div>
-          
+
           {showQuickProfile && (
             <div className="absolute bottom-0 left-12 w-64 bg-white dark:bg-[#1c2b33] rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-800 p-4 z-[100] animate-in slide-in-from-left-2 duration-200">
               <div className="flex items-center gap-3 mb-4">
-                <div className="size-12 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden relative flex items-center justify-center">
-                   <span className="material-symbols-outlined text-gray-400 text-2xl">person</span>
-                   <img src="https://picsum.photos/seed/user/100/100" className="absolute inset-0 w-full h-full object-cover" alt="Profile" />
+                <div className="size-12 rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center">
+                   <span className="material-symbols-outlined text-primary text-2xl">person</span>
                 </div>
                 <div>
                   <h4 className="text-sm font-bold">Alex Johnson</h4>
