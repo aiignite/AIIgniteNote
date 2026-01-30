@@ -18,8 +18,9 @@ class SocketService {
     if (this.socket) return;
     
     const token = api.getToken();
+    const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3215';
     
-    this.socket = io('http://localhost:4000', {
+    this.socket = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket', 'polling']
     });
@@ -32,9 +33,28 @@ class SocketService {
       this.messageHandlers.forEach(handler => handler(message));
     });
 
+    this.socket.on('online_users', (users: any[]) => {
+      this.onlineUsersHandlers.forEach(handler => handler(users));
+    });
+
     this.socket.on('disconnect', () => {
       console.log('Disconnected from socket server');
     });
+  }
+
+  private onlineUsersHandlers: ((users: any[]) => void)[] = [];
+
+  onOnlineUsers(handler: (users: any[]) => void) {
+    this.onlineUsersHandlers.push(handler);
+    return () => {
+      this.onlineUsersHandlers = this.onlineUsersHandlers.filter(h => h !== handler);
+    };
+  }
+
+  joinChat(userId: string, name: string) {
+    if (this.socket) {
+      this.socket.emit('join_chat', { userId, name });
+    }
   }
 
   disconnect() {

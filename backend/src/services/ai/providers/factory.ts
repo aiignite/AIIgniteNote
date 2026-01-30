@@ -4,6 +4,7 @@ import { AnthropicProvider } from './AnthropicProvider';
 import { OpenAIProvider } from './OpenAIProvider';
 import { OllamaProvider } from './OllamaProvider';
 import { LMStudioProvider } from './LMStudioProvider';
+import { MockProvider } from './MockProvider';
 import { AIProvider } from '../../../types';
 
 /**
@@ -26,6 +27,8 @@ export class AIProviderFactory {
         return new OllamaProvider(config);
       case AIProvider.LMSTUDIO:
         return new LMStudioProvider(config);
+      case 'MOCK' as AIProvider:
+        return new MockProvider(config);
       default:
         throw new Error(`Provider ${provider} not configured or unsupported`);
     }

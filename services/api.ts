@@ -198,6 +198,40 @@ export interface WorkspaceStats {
 }
 
 // Search types
+export interface ChatRoom {
+  id: string;
+  name?: string;
+  type: 'DIRECT' | 'GROUP';
+  members: ChatMember[];
+  updatedAt: string;
+  messages?: ChatMessage[];
+}
+
+export interface ChatMember {
+  userId: string;
+  role: string;
+  user: {
+      id: string;
+      name: string;
+      image?: string;
+      email?: string;
+  };
+}
+
+export interface ChatMessage {
+  id: string;
+  chatRoomId: string;
+  senderId: string;
+  content: string;
+  type: 'TEXT' | 'IMAGE' | 'FILE';
+  createdAt: string;
+  timestamp?: string; // Socket uses timestamp
+  sender: {
+      id: string;
+      name: string;
+      image?: string;
+  };
+}
 export interface SearchQueryParams {
   query: string;
   folderId?: string;
@@ -1028,6 +1062,11 @@ class APIClient {
     role?: string;
     category?: string;
     systemPrompt?: string;
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    enableMemory?: boolean;
+    enableWebSearch?: boolean;
     isSystem?: boolean;
     workspaceId?: string;
   }) {
@@ -1044,6 +1083,11 @@ class APIClient {
     role?: string;
     category?: string;
     systemPrompt?: string;
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    enableMemory?: boolean;
+    enableWebSearch?: boolean;
   }) {
     return this.request<{ success: true; data: any }>(`/api/ai-assistants/${id}`, {
       method: 'PUT',
@@ -1133,6 +1177,22 @@ class APIClient {
 
   async healthCheck() {
     return this.request('/health');
+  }
+
+  // Chat API
+  async getRooms(): Promise<ApiResponse<ChatRoom[]>> {
+    return this.request<ChatRoom[]>('/api/chats/rooms');
+  }
+
+  async getRoomMessages(roomId: string): Promise<ApiResponse<ChatMessage[]>> {
+    return this.request<ChatMessage[]>(`/api/chats/rooms/${roomId}/messages`);
+  }
+
+  async startDirectChat(userId: string): Promise<ApiResponse<ChatRoom>> {
+    return this.request<ChatRoom>('/api/chats/rooms/direct', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
   }
 
   async isAuthenticated(): Promise<boolean> {

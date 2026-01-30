@@ -7,45 +7,67 @@ import { z } from 'zod';
 const router = Router();
 
 const createAssistantSchema = z.object({
-  name: z.string().min(1).max(100),
-  description: z.string().optional(),
-  avatar: z.string().optional(),
-  role: z.string().optional(),
-  category: z.string().optional(),
-  systemPrompt: z.string().optional(),
-  isSystem: z.boolean().optional(),
-  workspaceId: z.string().optional(),
+  body: z.object({
+    name: z.string().min(1).max(100),
+    description: z.string().optional(),
+    avatar: z.string().optional(),
+    role: z.string().optional(),
+    category: z.string().optional(),
+    systemPrompt: z.string().optional(),
+    model: z.string().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    maxTokens: z.number().int().min(1).max(32768).optional(),
+    enableMemory: z.boolean().optional(),
+    enableWebSearch: z.boolean().optional(),
+    isSystem: z.boolean().optional(),
+    workspaceId: z.string().optional(),
+  })
 });
 
 const updateAssistantSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  description: z.string().optional(),
-  avatar: z.string().optional(),
-  role: z.string().optional(),
-  category: z.string().optional(),
-  systemPrompt: z.string().optional(),
+  body: z.object({
+    name: z.string().min(1).max(100).optional(),
+    description: z.string().optional(),
+    avatar: z.string().optional(),
+    role: z.string().optional(),
+    category: z.string().optional(),
+    systemPrompt: z.string().optional(),
+    model: z.string().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    maxTokens: z.number().int().min(1).max(32768).optional(),
+    enableMemory: z.boolean().optional(),
+    enableWebSearch: z.boolean().optional(),
+  })
 });
 
 const createConversationTagSchema = z.object({
-  conversationId: z.string(),
-  tag: z.string().min(1).max(50),
+  body: z.object({
+    conversationId: z.string(),
+    tag: z.string().min(1).max(50),
+  })
 });
 
 const createFavoriteMessageSchema = z.object({
-  messageId: z.string(),
-  conversationId: z.string(),
+  body: z.object({
+    messageId: z.string(),
+    conversationId: z.string(),
+  })
 });
 
 const createCustomPromptSchema = z.object({
-  name: z.string().min(1).max(100),
-  prompt: z.string().min(1),
-  category: z.string().optional(),
+  body: z.object({
+    name: z.string().min(1).max(100),
+    prompt: z.string().min(1),
+    category: z.string().optional(),
+  })
 });
 
 const updateCustomPromptSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  prompt: z.string().min(1).optional(),
-  category: z.string().optional(),
+  body: z.object({
+    name: z.string().min(1).max(100).optional(),
+    prompt: z.string().min(1).optional(),
+    category: z.string().optional(),
+  })
 });
 
 router.get('/', authenticate, aiAssistantsController.getAssistants);

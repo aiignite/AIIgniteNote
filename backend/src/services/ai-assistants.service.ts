@@ -8,6 +8,11 @@ export interface CreateAssistantInput {
   role?: string;
   category?: string;
   systemPrompt?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  enableMemory?: boolean;
+  enableWebSearch?: boolean;
   isSystem?: boolean;
   workspaceId?: string;
 }
@@ -19,6 +24,11 @@ export interface UpdateAssistantInput {
   role?: string;
   category?: string;
   systemPrompt?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  enableMemory?: boolean;
+  enableWebSearch?: boolean;
 }
 
 export const assistantsService = {
@@ -64,6 +74,11 @@ export const assistantsService = {
         role: input.role,
         category: input.category,
         systemPrompt: input.systemPrompt || '',
+        model: input.model,
+        temperature: input.temperature,
+        maxTokens: input.maxTokens,
+        enableMemory: input.enableMemory,
+        enableWebSearch: input.enableWebSearch,
         isSystem: input.isSystem || false,
         userId,
         workspaceId: input.workspaceId,

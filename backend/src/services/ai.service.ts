@@ -57,9 +57,36 @@ export class AIService {
     // Determine which provider to use
     const selectedProvider = provider || userSettings?.aiModelPreference as AIProvider || AIProvider.GEMINI;
 
-    // Get API key for the provider
-    const apiKey = this.getProviderApiKey(selectedProvider);
-    const baseURL = this.getProviderBaseURL(selectedProvider);
+    // Get API key and Base URL
+    let apiKey = this.getProviderApiKey(selectedProvider);
+    let baseURL = this.getProviderBaseURL(selectedProvider);
+
+    // Attempt to load custom model configuration if model is specified
+    if (options?.model) {
+      console.log(`[chatStream] Looking up: modelId="${options.model}", provider="${selectedProvider}"`);
+      const customModel = await prisma.aIModel.findFirst({
+        where: {
+          modelId: options.model,
+          provider: selectedProvider,
+          userId
+        }
+      }) || await prisma.aIModel.findFirst({
+        where: {
+          modelId: options.model,
+          provider: selectedProvider,
+          isPublic: true
+        }
+      });
+
+      if (customModel) {
+        console.log(`[chatStream] ✓ Found: ${customModel.name}, endpoint=${customModel.endpoint ? 'SET' : 'EMPTY'}`);
+        if (customModel.apiKey) apiKey = customModel.apiKey;
+        if (customModel.endpoint) baseURL = customModel.endpoint;
+      } else {
+        console.log(`[chatStream] ✗ Model not found`);
+      }
+    }
+    console.log(`[chatStream] Final: baseURL="${baseURL}", apiKey=${apiKey ? 'SET' : 'EMPTY'}`);
 
     // Create provider instance
     let aiProvider = AIProviderFactory.create(selectedProvider, {
@@ -204,9 +231,36 @@ export class AIService {
     // Determine which provider to use
     const selectedProvider = provider || userSettings?.aiModelPreference as AIProvider || AIProvider.GEMINI;
 
-    // Get API key for the provider
-    const apiKey = this.getProviderApiKey(selectedProvider);
-    const baseURL = this.getProviderBaseURL(selectedProvider);
+    // Get API key and Base URL
+    let apiKey = this.getProviderApiKey(selectedProvider);
+    let baseURL = this.getProviderBaseURL(selectedProvider);
+
+    // Attempt to load custom model configuration if model is specified
+    if (options?.model) {
+      console.log(`[chat] Looking up: modelId="${options.model}", provider="${selectedProvider}"`);
+      const customModel = await prisma.aIModel.findFirst({
+        where: {
+          modelId: options.model,
+          provider: selectedProvider,
+          userId
+        }
+      }) || await prisma.aIModel.findFirst({
+        where: {
+          modelId: options.model,
+          provider: selectedProvider,
+          isPublic: true
+        }
+      });
+
+      if (customModel) {
+        console.log(`[chat] ✓ Found: ${customModel.name}, endpoint=${customModel.endpoint ? 'SET' : 'EMPTY'}`);
+        if (customModel.apiKey) apiKey = customModel.apiKey;
+        if (customModel.endpoint) baseURL = customModel.endpoint;
+      } else {
+        console.log(`[chat] ✗ Model not found`);
+      }
+    }
+    console.log(`[chat] Final: baseURL="${baseURL}", apiKey=${apiKey ? 'SET' : 'EMPTY'}`);
 
     // Create provider instance
     let aiProvider = AIProviderFactory.create(selectedProvider, {

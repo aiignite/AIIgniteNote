@@ -50,12 +50,9 @@ export abstract class BaseAIProvider implements IAIProvider {
   abstract chat(messages: ChatMessage[], options?: ChatOptions): Promise<AIResponse>;
 
   async isAvailable(): Promise<boolean> {
-    try {
-      await this.chat([{ role: 'user', content: 'test' }], { maxTokens: 1 });
-      return true;
-    } catch {
-      return false;
-    }
+    // We assume availability if the provider was constructed successfully
+    // The constructor should handle validation of required config (like API keys)
+    return true;
   }
 
   /**

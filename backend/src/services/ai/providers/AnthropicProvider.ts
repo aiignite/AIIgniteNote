@@ -11,6 +11,7 @@ export class AnthropicProvider extends BaseAIProvider {
     if (!config.apiKey) {
       throw new Error('Anthropic API key is required');
     }
+    console.log(`[AnthropicProvider] Initializing with config: BaseURL=${config.baseURL || 'Default'}, Model=${config.model || 'Default'}`);
     this.client = new Anthropic({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
@@ -27,8 +28,16 @@ export class AnthropicProvider extends BaseAIProvider {
         content: msg.content,
       }));
 
+    const model = options?.model || this.config.model || 'claude-3-5-sonnet-20241022';
+    console.log(`[AnthropicProvider.chat] Request Details:`);
+    console.log(`  - Model: ${model}`);
+    console.log(`  - Messages: ${chatMessages.length}`);
+    console.log(`  - System prompt: ${systemMessage ? 'Yes' : 'No'}`);
+    console.log(`  - API Key: ${this.config.apiKey ? this.config.apiKey.substring(0, 10) + '...' : 'NONE'}`);
+    console.log(`  - BaseURL: ${this.config.baseURL || 'Default'}`);
+
     const response = await this.client.messages.create({
-      model: options?.model || this.config.model || 'claude-3-5-sonnet-20241022',
+      model: model,
       max_tokens: options?.maxTokens || 4096,
       system: systemMessage?.content,
       messages: chatMessages,

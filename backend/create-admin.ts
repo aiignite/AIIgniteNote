@@ -5,7 +5,7 @@ const prisma = new PrismaClient();
 
 async function createAdminUser() {
   try {
-    const adminEmail = 'admin@aiignite.com';
+    const adminEmail = 'admin@aiigninte.com';
     const adminPassword = 'Admin123456';
 
     const hashedPassword = await hashPassword(adminPassword);

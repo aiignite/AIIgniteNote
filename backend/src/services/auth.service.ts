@@ -49,7 +49,7 @@ export class AuthService {
         password: hashedPassword,
         verificationToken,
         verificationTokenExpires,
-        isActive: false, // User is inactive until verified
+        isActive: true, // Set to true by default for easier onboarding
         settings: {
           create: {},
         },

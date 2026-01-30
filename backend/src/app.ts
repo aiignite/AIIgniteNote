@@ -19,6 +19,7 @@ import attachmentsRoutes from './routes/attachments.routes';
 import searchRoutes from './routes/search.routes';
 import workspacesRoutes from './routes/workspaces.routes';
 import templateRoutes from './routes/template.routes';
+import chatRoutes from './routes/chat.routes';
 import { initSocket } from './socket';
 
 // Create Express app
@@ -106,6 +107,7 @@ app.get('/api', (_req, res) => {
       endpoints: {
         auth: '/api/auth',
         notes: '/api/notes',
+        chat: '/api/chats',
         folders: '/api/folders',
         tags: '/api/tags',
         search: '/api/search',
@@ -129,6 +131,7 @@ app.use('/api/attachments', attachmentsRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/workspaces', workspacesRoutes);
 app.use('/api/templates', templateRoutes);
+app.use('/api/chats', chatRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/ai-assistants', aiAssistantsRoutes);
 app.use('/api/ai-attachments', aiAttachmentRoutes);

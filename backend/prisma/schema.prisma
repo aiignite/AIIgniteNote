@@ -72,6 +72,10 @@ model User {
   aiCustomPrompts AICustomPrompt[]
   settings     UserSettings?
 
+  // Chat Relations
+  chatMembers  ChatMember[]
+  messages     ChatMessage[]
+
   @@map("users")
 }
 
@@ -463,18 +467,23 @@ model AIAttachment {
 // ============================================================
 
 model AIAssistant {
-  id          String   @id @default(cuid())
-  name        String
-  description String?  @db.Text
-  avatar      String?
-  role        String?
-  category    String?
-  systemPrompt String   @db.Text
-  isSystem    Boolean  @default(false)
-  userId      String
-  workspaceId String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String   @id @default(cuid())
+  name            String
+  description     String?  @db.Text
+  avatar          String?
+  role            String?
+  category        String?
+  systemPrompt    String   @db.Text @map("system_prompt")
+  model           String?  // AI model ID (e.g., gemini-2.0-flash-exp)
+  temperature     Float?   @default(0.7)
+  maxTokens       Int?     @default(2048) @map("max_tokens")
+  enableMemory    Boolean  @default(true) @map("enable_memory")
+  enableWebSearch Boolean  @default(false) @map("enable_web_search")
+  isSystem        Boolean  @default(false) @map("is_system")
+  userId          String   @map("user_id")
+  workspaceId     String?  @map("workspace_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   // Relations
   user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -557,4 +566,72 @@ model UserSettings {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_settings")
+}
+
+// ============================================================
+// Real-time Chat Tables
+// ============================================================
+
+enum ChatType {
+  DIRECT
+  GROUP
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+}
+
+model ChatRoom {
+  id        String   @id @default(cuid())
+  name      String?  // For group chats
+  type      ChatType @default(DIRECT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members   ChatMember[]
+  messages  ChatMessage[]
+
+  @@map("chat_rooms")
+}
+
+model ChatMember {
+  id         String   @id @default(cuid())
+  chatRoomId String
+  userId     String
+  role       String   @default("MEMBER") // ADMIN, MEMBER
+  joinedAt   DateTime @default(now())
+  lastReadAt DateTime @default(now())
+
+  chatRoom ChatRoom @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatRoomId, userId])
+  @@index([userId])
+  @@map("chat_members")
+}
+
+model ChatMessage {
+  id         String      @id @default(cuid())
+  chatRoomId String
+  senderId   String
+  content    String      @db.Text
+  type       MessageType @default(TEXT)
+  fileUrl    String?
+  fileName   String?
+  fileSize   Int?
+  mimeType   String?
+  readBy     Json?       // Array of user IDs or timestamps
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  chatRoom ChatRoom @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  sender   User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([chatRoomId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@map("chat_messages")
 }
