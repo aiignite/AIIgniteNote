@@ -43,8 +43,8 @@ export interface AuthResponse {
   user: {
     id: string;
     email: string;
-    username: string;
-    avatarUrl?: string;
+    name?: string;
+    image?: string;
   };
   accessToken: string;
   refreshToken: string;
@@ -64,7 +64,7 @@ export interface Note {
   isDeleted: boolean;
   author: {
     id: string;
-    username: string;
+    name?: string;
   };
   folder?: {
     id: string;
@@ -83,14 +83,14 @@ export interface CreateNoteRequest {
   content?: string;
   folderId?: string;
   workspaceId?: string;
-  tags?: string[];
+  tags?: Array<string | { name: string; color?: string }>;
 }
 
 export interface UpdateNoteRequest {
   title?: string;
   content?: string;
   folderId?: string;
-  tags?: string[];
+  tags?: Array<string | { name: string; color?: string }>;
 }
 
 export interface NotesQueryParams {
@@ -172,7 +172,7 @@ export interface Workspace {
     role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'VIEWER';
     user: {
       id: string;
-      username: string;
+      name?: string;
       email: string;
       avatarUrl?: string;
     };
@@ -192,7 +192,7 @@ export interface WorkspaceStats {
     updatedAt: string;
     author: {
       id: string;
-      username: string;
+      name?: string;
     };
   }>;
 }
@@ -205,6 +205,7 @@ export interface ChatRoom {
   members: ChatMember[];
   updatedAt: string;
   messages?: ChatMessage[];
+  unreadCount?: number;
 }
 
 export interface ChatMember {
@@ -218,18 +219,46 @@ export interface ChatMember {
   };
 }
 
+export interface ChatUser {
+  id: string;
+  name?: string;
+  email?: string;
+  image?: string;
+  isActive: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   chatRoomId: string;
   senderId: string;
   content: string;
-  type: 'TEXT' | 'IMAGE' | 'FILE';
+  type: 'TEXT' | 'IMAGE' | 'FILE' | 'SYSTEM';
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  isPinned?: boolean;
   createdAt: string;
   timestamp?: string; // Socket uses timestamp
   sender: {
       id: string;
       name: string;
       image?: string;
+  };
+}
+
+export interface ChatFileItem {
+  id: string;
+  content: string;
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  createdAt: string;
+  sender: {
+    id: string;
+    name: string;
+    image?: string;
   };
 }
 export interface SearchQueryParams {
@@ -445,6 +474,28 @@ class APIClient {
     return response.data;
   }
 
+  async verifyEmailCode(email: string, code: string): Promise<{ message: string }> {
+    const response = await this.request<{ success: true; data: { message: string } }>(
+      '/api/auth/verify-code',
+      {
+        method: 'POST',
+        body: JSON.stringify({ email, code }),
+      }
+    );
+    return response.data;
+  }
+
+  async resendVerificationCode(email: string): Promise<{ message: string }> {
+    const response = await this.request<{ success: true; data: { message: string } }>(
+      '/api/auth/resend-code',
+      {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }
+    );
+    return response.data;
+  }
+
   async logout(): Promise<void> {
     try {
       await this.request('/api/auth/logout', {
@@ -485,10 +536,16 @@ class APIClient {
     return this.request('/api/users/profile');
   }
 
-  async updateProfile(data: { username?: string; avatarUrl?: string }) {
+  async updateProfile(data: { name?: string; image?: string }) {
     return this.request('/api/users/profile', {
       method: 'PUT',
       body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAccount() {
+    return this.request('/api/users/profile', {
+      method: 'DELETE',
     });
   }
 
@@ -681,6 +738,7 @@ class APIClient {
 
             try {
               const parsed = JSON.parse(data);
+              console.log('[chatAIStream] Parsed data:', parsed);
 
               // Handle error in stream
               if (parsed.error) {
@@ -693,6 +751,8 @@ class APIClient {
               const content = parsed.content || '';
               const done = parsed.done || false;
               finalConversationId = parsed.conversationId || finalConversationId;
+
+              console.log(`[chatAIStream] Content: "${content.substring(0, 30)}...", done: ${done}, conversationId: ${finalConversationId}`);
 
               if (content) {
                 onChunk(content, done, finalConversationId);
@@ -1184,14 +1244,128 @@ class APIClient {
     return this.request<ChatRoom[]>('/api/chats/rooms');
   }
 
-  async getRoomMessages(roomId: string): Promise<ApiResponse<ChatMessage[]>> {
-    return this.request<ChatMessage[]>(`/api/chats/rooms/${roomId}/messages`);
+  async getChatUsers(): Promise<ApiResponse<ChatUser[]>> {
+    return this.request<ChatUser[]>('/api/chats/users');
+  }
+
+  async getRoomMessages(roomId: string, options?: { limit?: number; cursor?: string; query?: string; since?: string }): Promise<ApiResponse<ChatMessage[]>> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.cursor) params.set('cursor', options.cursor);
+    if (options?.query) params.set('query', options.query);
+    if (options?.since) params.set('since', options.since);
+    const query = params.toString();
+    return this.request<ChatMessage[]>(`/api/chats/rooms/${roomId}/messages${query ? `?${query}` : ''}`);
   }
 
   async startDirectChat(userId: string): Promise<ApiResponse<ChatRoom>> {
     return this.request<ChatRoom>('/api/chats/rooms/direct', {
       method: 'POST',
       body: JSON.stringify({ userId }),
+    });
+  }
+
+  async createGroupRoom(name: string, memberIds: string[]): Promise<ApiResponse<ChatRoom>> {
+    return this.request<ChatRoom>('/api/chats/rooms/group', {
+      method: 'POST',
+      body: JSON.stringify({ name, memberIds })
+    });
+  }
+
+  async updateGroupRoomName(roomId: string, name: string): Promise<ApiResponse<ChatRoom>> {
+    return this.request<ChatRoom>(`/api/chats/rooms/${roomId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name })
+    });
+  }
+
+  async addGroupMembers(roomId: string, memberIds: string[]): Promise<ApiResponse<ChatRoom>> {
+    return this.request<ChatRoom>(`/api/chats/rooms/${roomId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ memberIds })
+    });
+  }
+
+  async removeGroupMember(roomId: string, memberId: string): Promise<ApiResponse<ChatRoom>> {
+    return this.request<ChatRoom>(`/api/chats/rooms/${roomId}/members/${memberId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async updateGroupMemberRole(roomId: string, memberId: string, role: 'ADMIN' | 'MEMBER'): Promise<ApiResponse<ChatRoom>> {
+    return this.request<ChatRoom>(`/api/chats/rooms/${roomId}/members/${memberId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role })
+    });
+  }
+
+  async leaveRoom(roomId: string): Promise<ApiResponse<{ roomId: string; deleted?: boolean } | ChatRoom>> {
+    return this.request<{ roomId: string; deleted?: boolean } | ChatRoom>(`/api/chats/rooms/${roomId}/leave`, {
+      method: 'POST'
+    });
+  }
+
+  async markRoomRead(roomId: string): Promise<ApiResponse<{ roomId: string; readAt: string }>> {
+    return this.request<{ roomId: string; readAt: string }>(`/api/chats/rooms/${roomId}/read`, {
+      method: 'POST'
+    });
+  }
+
+  async getRoomFiles(roomId: string, options?: { limit?: number; cursor?: string }): Promise<ApiResponse<ChatFileItem[]>> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.cursor) params.set('cursor', options.cursor);
+    const query = params.toString();
+    return this.request<ChatFileItem[]>(`/api/chats/rooms/${roomId}/files${query ? `?${query}` : ''}`);
+  }
+
+  async purgeRoomFiles(roomId: string, days?: number): Promise<ApiResponse<{ removed: number }>> {
+    return this.request<{ removed: number }>(`/api/chats/rooms/${roomId}/files/purge`, {
+      method: 'POST',
+      body: JSON.stringify({ days })
+    });
+  }
+
+  async purgeSystemMessages(roomId: string, days?: number): Promise<ApiResponse<{ removed: number }>> {
+    return this.request<{ removed: number }>(`/api/chats/rooms/${roomId}/system/purge`, {
+      method: 'POST',
+      body: JSON.stringify({ days })
+    });
+  }
+
+  async deleteChatMessage(messageId: string): Promise<ApiResponse<{ messageId: string }>> {
+    return this.request<{ messageId: string }>(`/api/chats/messages/${messageId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async updateChatMessage(messageId: string, content: string): Promise<ApiResponse<ChatMessage>> {
+    return this.request<ChatMessage>(`/api/chats/messages/${messageId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ content })
+    });
+  }
+
+  async postAnnouncement(roomId: string, content: string): Promise<ApiResponse<ChatMessage>> {
+    return this.request<ChatMessage>(`/api/chats/rooms/${roomId}/announcement`, {
+      method: 'POST',
+      body: JSON.stringify({ content })
+    });
+  }
+
+  async getPinnedMessage(roomId: string): Promise<ApiResponse<ChatMessage | null>> {
+    return this.request<ChatMessage | null>(`/api/chats/rooms/${roomId}/pinned`);
+  }
+
+  async pinMessage(roomId: string, messageId: string): Promise<ApiResponse<ChatMessage | null>> {
+    return this.request<ChatMessage | null>(`/api/chats/rooms/${roomId}/pin/${messageId}`, {
+      method: 'POST'
+    });
+  }
+
+  async unpinMessage(roomId: string): Promise<ApiResponse<{ roomId: string }>> {
+    return this.request<{ roomId: string }>(`/api/chats/rooms/${roomId}/unpin`, {
+      method: 'POST'
     });
   }
 
