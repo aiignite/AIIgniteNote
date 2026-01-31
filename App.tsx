@@ -83,7 +83,13 @@ const apiNoteToLocalNote = (apiNote: any): Note => {
   console.log('[apiNoteToLocalNote] Folder:', folder, '(folder object:', apiNote.folder, ')');
 
   // Extract tags
-  const tags = apiNote.tags?.map((t: any) => t.name) || [];
+  const tags = apiNote.tags?.map((t: any) => {
+    const tagObj = t.tag || t;
+    return {
+      name: tagObj.name,
+      color: tagObj.color || '#6b7280'
+    };
+  }).filter((tag: any) => typeof tag.name === 'string') || [];
   console.log('[apiNoteToLocalNote] Tags:', tags, '(tags array:', apiNote.tags, ')');
 
   const result: Note = {
@@ -407,11 +413,11 @@ const App: React.FC = () => {
   }, []);
 
   // Handle register
-  const handleRegister = useCallback(async (email: string, password: string, username: string) => {
+  const handleRegister = useCallback(async (email: string, password: string, name: string) => {
     console.log('[handleRegister] Starting registration process...');
 
     try {
-      const response = await api.register({ email, password, name: username });
+      const response = await api.register({ email, password, name });
       console.log('[handleRegister] Registration successful, verification required.');
       
       return { 
@@ -421,6 +427,24 @@ const App: React.FC = () => {
     } catch (error: any) {
       console.error('[handleRegister] Registration error:', error);
       throw error;
+    }
+  }, []);
+
+  const handleVerifyCode = useCallback(async (email: string, code: string) => {
+    try {
+      const response = await api.verifyEmailCode(email, code);
+      return { success: true, message: response.message };
+    } catch (error: any) {
+      return { success: false, message: error?.message || '验证码校验失败' };
+    }
+  }, []);
+
+  const handleResendCode = useCallback(async (email: string) => {
+    try {
+      const response = await api.resendVerificationCode(email);
+      return { success: true, message: response.message };
+    } catch (error: any) {
+      return { success: false, message: error?.message || '验证码发送失败' };
     }
   }, []);
 
@@ -599,6 +623,7 @@ const App: React.FC = () => {
       const response = await api.updateNote(updatedNote.id, {
         title: updatedNote.title,
         content: updatedNote.content,
+        tags: updatedNote.tags,
       }) as { success: boolean; data: ApiNote };
 
       if (response.success) {
@@ -636,6 +661,7 @@ const App: React.FC = () => {
           await offlineSync.enqueueRequest('PUT', `/api/notes/${updatedNote.id}`, {
             title: updatedNote.title,
             content: updatedNote.content,
+            tags: updatedNote.tags,
           });
         } catch (queueError) {
           console.warn('Failed to enqueue note update:', queueError);
@@ -801,7 +827,9 @@ const App: React.FC = () => {
     return (
       <LoginPage 
         onLogin={handleLogin} 
-        onRegister={handleRegister} 
+        onRegister={handleRegister}
+        onVerifyCode={handleVerifyCode}
+        onResendCode={handleResendCode}
         externalMessage={verificationMessage}
       />
     );
@@ -844,7 +872,12 @@ const App: React.FC = () => {
               onMouseDown={() => setIsDraggingLeft(true)}
               title="Drag to resize list"
             />
-            <Editor note={activeNote} onUpdateNote={handleUpdateNote} />
+            <Editor 
+              note={activeNote} 
+              onUpdateNote={handleUpdateNote} 
+              aiPanelOpen={aiPanelOpen}
+              onToggleAiPanel={() => setAiPanelOpen(!aiPanelOpen)}
+            />
           </div>
         );
     }

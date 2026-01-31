@@ -1,15 +1,17 @@
 
-import React, { useState, useId } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { useThemeStore } from '../store/themeStore';
 import { useLanguageStore } from '../store/languageStore';
 
 interface LoginPageProps {
   onLogin: (email: string, password: string) => void;
-  onRegister: (email: string, password: string, username: string) => Promise<{ success: boolean; message?: string }>;
+  onRegister: (email: string, password: string, name: string) => Promise<{ success: boolean; message?: string }>;
+  onVerifyCode: (email: string, code: string) => Promise<{ success: boolean; message?: string }>;
+  onResendCode: (email: string) => Promise<{ success: boolean; message?: string }>;
   externalMessage?: { type: 'success' | 'error', text: string } | null;
 }
 
-const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMessage }) => {
+const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, onVerifyCode, onResendCode, externalMessage }) => {
   const baseId = useId();
   const theme = useThemeStore();
   const { t } = useLanguageStore();
@@ -17,10 +19,20 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMess
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [username, setUsername] = useState('');
+  const [name, setName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [localMessage, setLocalMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [resendCountdown, setResendCountdown] = useState(0);
+
+  useEffect(() => {
+    if (resendCountdown <= 0) return;
+    const timer = setInterval(() => setResendCountdown((c) => c - 1), 1000);
+    return () => clearInterval(timer);
+  }, [resendCountdown]);
 
   // Combine local and external messages
   const message = localMessage || externalMessage;
@@ -30,25 +42,81 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMess
 
     if (isLoading) return;
 
+    if (!awaitingVerification && !isLogin && password.trim().length < 8) {
+      setLocalMessage({ type: 'error', text: '密码至少 8 位，请重新输入。' });
+      return;
+    }
+
+    if (awaitingVerification && code.trim().length < 6) {
+      setLocalMessage({ type: 'error', text: '请输入 6 位数字验证码。' });
+      return;
+    }
+
     setLocalMessage(null);
     setIsLoading(true);
 
     try {
-      if (isLogin) {
+      if (awaitingVerification && pendingEmail) {
+        const result = await onVerifyCode(pendingEmail.trim(), code.trim());
+        if (result.success) {
+          setLocalMessage({ type: 'success', text: result.message || '邮箱验证成功，请登录。' });
+          setAwaitingVerification(false);
+          setIsLogin(true);
+          setCode('');
+          setPendingEmail(null);
+        }
+      } else if (isLogin) {
         await onLogin(email, password);
       } else {
-        const result = await onRegister(email, password, username);
+        const result = await onRegister(email.trim(), password, name.trim());
         if (result.success) {
-          setLocalMessage({ type: 'success', text: result.message || 'Registration successful! Please check your email to verify your account.' });
-          // Clear form
-          setEmail('');
-          setPassword('');
-          setUsername('');
-          setIsLogin(true);
+          setLocalMessage({ type: 'success', text: result.message || '注册成功，验证码已发送，请输入验证码完成验证。' });
+          setPendingEmail(email.trim());
+          setAwaitingVerification(true);
+          setCode('');
+          setResendCountdown(60);
         }
       }
     } catch (error: any) {
-      setLocalMessage({ type: 'error', text: error?.message || (isLogin ? 'Login failed' : 'Registration failed') });
+      const messageText = error?.message || '';
+      const emailExists = messageText.includes('already exists') || messageText.includes('EMAIL_EXISTS');
+      const emailNotVerified = messageText.includes('邮箱验证') || messageText.includes('EMAIL_NOT_VERIFIED');
+      const weakPassword = messageText.includes('Password must be at least 8 characters');
+      const invalidCredentials = messageText.includes('Invalid email or password');
+
+      if (!awaitingVerification && !isLogin && emailExists) {
+        setPendingEmail(email.trim());
+        setAwaitingVerification(true);
+        setLocalMessage({ type: 'error', text: '该邮箱已注册。如未验证，请点击重发验证码后完成验证。' });
+      } else if (!awaitingVerification && isLogin && emailNotVerified) {
+        setPendingEmail(email.trim());
+        setAwaitingVerification(true);
+        setLocalMessage({ type: 'error', text: '该账号未完成邮箱验证，请输入验证码。' });
+      } else if (weakPassword) {
+        setLocalMessage({ type: 'error', text: '密码至少 8 位，请重新输入。' });
+      } else if (invalidCredentials) {
+        setLocalMessage({ type: 'error', text: '邮箱或密码错误，请检查后重试。' });
+      } else {
+        setLocalMessage({ type: 'error', text: messageText || (awaitingVerification ? '验证码校验失败' : isLogin ? 'Login failed' : 'Registration failed') });
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    if (!pendingEmail || resendCountdown > 0 || isLoading) return;
+
+    setLocalMessage(null);
+    setIsLoading(true);
+    try {
+      const result = await onResendCode(pendingEmail.trim());
+      if (result.success) {
+        setLocalMessage({ type: 'success', text: result.message || '验证码已重新发送，请查收邮箱。' });
+        setResendCountdown(60);
+      }
+    } catch (error: any) {
+      setLocalMessage({ type: 'error', text: error?.message || '验证码发送失败' });
     } finally {
       setIsLoading(false);
     }
@@ -146,17 +214,17 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMess
               </div>
             )}
 
-            {!isLogin && (
+            {!isLogin && !awaitingVerification && (
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Username</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">姓名</label>
                 <input
                   type="text"
                   required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   disabled={isLoading}
                   className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm disabled:opacity-50"
-                  placeholder="Your Name"
+                  placeholder="您的称呼"
                 />
               </div>
             )}
@@ -168,7 +236,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMess
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                disabled={isLoading}
+                disabled={isLoading || awaitingVerification}
                 className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 placeholder="name@company.com"
               />
@@ -184,14 +252,14 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMess
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  disabled={isLoading}
+                  disabled={isLoading || awaitingVerification}
                   className="w-full px-4 py-3 pr-12 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="•••••"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  disabled={isLoading}
+                  disabled={isLoading || awaitingVerification}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed p-1"
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
@@ -202,6 +270,39 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMess
               </div>
             </div>
 
+            {awaitingVerification && pendingEmail && (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">邮箱验证码</label>
+                  <input
+                    type="text"
+                    required
+                    value={code}
+                    onChange={(e) => {
+                      const next = e.target.value.replace(/\D/g, '').slice(0, 6);
+                      setCode(next);
+                    }}
+                    disabled={isLoading}
+                    className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-sm disabled:opacity-50"
+                    placeholder="请输入6位验证码"
+                    inputMode="numeric"
+                    maxLength={6}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>验证码已发送至 {pendingEmail}</span>
+                  <button
+                    type="button"
+                    onClick={handleResendCode}
+                    disabled={resendCountdown > 0 || isLoading}
+                    className="text-primary font-bold disabled:opacity-50"
+                  >
+                    {resendCountdown > 0 ? `重新发送(${resendCountdown}s)` : '重新发送验证码'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={isLoading}
@@ -210,12 +311,12 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMess
               {isLoading ? (
                 <>
                   <span className="size-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  <span>{isLogin ? t.login.signingIn : 'Creating account...'}</span>
+                  <span>{awaitingVerification ? '正在验证...' : isLogin ? t.login.signingIn : 'Creating account...'}</span>
                 </>
               ) : (
                 <>
-                  <span className="material-symbols-outlined">{isLogin ? 'login' : 'person_add'}</span>
-                  <span>{isLogin ? t.login.signInBtn : 'Create Account'}</span>
+                  <span className="material-symbols-outlined">{awaitingVerification ? 'verified' : isLogin ? 'login' : 'person_add'}</span>
+                  <span>{awaitingVerification ? '验证邮箱' : isLogin ? t.login.signInBtn : 'Create Account'}</span>
                 </>
               )}
             </button>
@@ -224,7 +325,12 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister, externalMess
           <div className="mt-8 text-center border-t border-gray-100 dark:border-gray-800 pt-6">
             <p className="text-xs text-gray-500">
               {isLogin ? t.login.newHere : 'Already have an account?'} <button 
-                onClick={() => setIsLogin(!isLogin)}
+                onClick={() => {
+                  setIsLogin(!isLogin);
+                  setAwaitingVerification(false);
+                  setPendingEmail(null);
+                  setCode('');
+                }}
                 className="text-primary font-bold hover:underline ml-1"
               >
                 {isLogin ? t.login.createAccount : 'Sign In'}
