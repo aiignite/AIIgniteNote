@@ -624,6 +624,7 @@ model ChatMessage {
   fileSize   Int?
   mimeType   String?
   readBy     Json?       // Array of user IDs or timestamps
+  isPinned   Boolean     @default(false)
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
 

@@ -11,6 +11,11 @@ interface ChatMessage {
   content: string;
   timestamp: string;
   roomId?: string;
+  type?: 'TEXT' | 'IMAGE' | 'FILE' | 'SYSTEM';
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
 }
 
 export const initSocket = (httpServer: HttpServer) => {
@@ -47,24 +52,63 @@ export const initSocket = (httpServer: HttpServer) => {
       
       if (message.roomId) {
         try {
-          const savedMessage = await chatService.saveMessage(message.roomId, message.senderId, message.content);
+          // Prefer explicit type, fallback to parsing content
+          let messageType: 'TEXT' | 'IMAGE' | 'FILE' | 'SYSTEM' = 'TEXT';
+          if (message.type) {
+            messageType = message.type;
+          } else if (message.content.includes('📎 [文件]')) {
+            messageType = 'FILE';
+          } else if (message.content.includes('📸 [截图]')) {
+            messageType = 'IMAGE';
+          }
+
+          const savedMessage = await chatService.saveMessage(
+            message.roomId,
+            message.senderId,
+            message.content,
+            messageType as any,
+            {
+              fileUrl: message.fileUrl,
+              fileName: message.fileName,
+              fileSize: message.fileSize,
+              mimeType: message.mimeType
+            }
+          );
           
           const messageToEmit = {
             ...message,
             id: savedMessage.id,
             timestamp: savedMessage.createdAt.toISOString(),
-            sender: savedMessage.sender
+            sender: savedMessage.sender,
+            type: savedMessage.type,
+            fileUrl: savedMessage.fileUrl,
+            fileName: savedMessage.fileName,
+            fileSize: savedMessage.fileSize,
+            mimeType: savedMessage.mimeType
           };
 
+          // Broadcast to room
           io.to(message.roomId).emit('receive_message', messageToEmit);
+          
+          // Also emit a typing_stop event to clear any typing indicators
+          io.to(message.roomId).emit('typing_stop', { userId: message.senderId });
         } catch (error) {
           logger.error('Error saving message:', error);
-          // Fallback to simpler emit if save fails, or handle error
+          // Fallback to simpler emit if save fails
           io.to(message.roomId).emit('receive_message', message);
         }
       } else {
         io.emit('receive_message', message);
       }
+    });
+
+    // Handle typing indicators
+    socket.on('user_typing', (data: { roomId: string, userId: string, name: string }) => {
+      io.to(data.roomId).emit('user_typing', { userId: data.userId, name: data.name });
+    });
+
+    socket.on('user_stop_typing', (data: { roomId: string, userId: string }) => {
+      io.to(data.roomId).emit('user_stop_typing', { userId: data.userId });
     });
 
     socket.on('disconnect', () => {
