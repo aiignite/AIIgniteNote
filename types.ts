@@ -58,7 +58,7 @@ export interface Note {
   createdAt: string;     // Added for sorting
   timestamp: number;     // Added for accurate sorting
   folder: string;
-  tags: string[];
+  tags: (string | { name: string; color: string })[]; // Support both for flexibility
   isFavorite?: boolean;
 }
 
