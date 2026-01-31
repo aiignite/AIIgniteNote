@@ -71,37 +71,60 @@ export class AnthropicProvider extends BaseAIProvider {
 
     const model = options?.model || this.config.model || 'claude-3-5-sonnet-20241022';
     
-    console.log('[AnthropicProvider.streamChat] Starting with model:', model);
-    console.log('[AnthropicProvider.streamChat] Messages count:', chatMessages.length);
+    console.log('[AnthropicProvider.streamChat] Starting REAL stream with model:', model);
     console.log('[AnthropicProvider.streamChat] BaseURL:', this.config.baseURL);
 
     try {
-      // Try non-streaming first to see if API works at all
-      console.log('[AnthropicProvider.streamChat] Attempting non-streaming call first...');
-      const response = await this.client.messages.create({
+      const stream = await this.client.messages.create({
         model: model,
         max_tokens: options?.maxTokens || 4096,
         system: systemMessage?.content,
         messages: chatMessages,
-        stream: false,
+        stream: true,
       });
 
-      console.log('[AnthropicProvider.streamChat] Non-streaming call successful');
+      console.log('[AnthropicProvider.streamChat] Stream created, beginning iteration...');
+
+      let chunkCount = 0;
+      let allEventsForDebug: any[] = [];
       
-      // Yield the full response in chunks to simulate streaming
-      const fullText = response.content[0].type === 'text' ? response.content[0].text : '';
-      console.log('[AnthropicProvider.streamChat] Full response length:', fullText.length);
-      
-      // Split into chunks for streaming effect
-      const chunkSize = 10;
-      for (let i = 0; i < fullText.length; i += chunkSize) {
-        const chunk = fullText.slice(i, i + chunkSize);
-        yield chunk;
+      for await (const event of stream) {
+        chunkCount++;
+        allEventsForDebug.push(event);
+        
+        // Log first few events in full detail
+        if (chunkCount <= 5) {
+          console.log(`[AnthropicProvider.streamChat] Event #${chunkCount}:`, JSON.stringify(event, null, 2));
+        }
+        
+        // Handle different event types for Anthropic/GLM streaming
+        if (event.type === 'content_block_delta') {
+          const delta = event.delta as any;
+          if (delta.type === 'text_delta' && delta.text) {
+            yield delta.text;
+          } else if (delta.type === 'text' && delta.text) {
+            yield delta.text;
+          }
+        } else if (event.type === 'content_block_start') {
+          const content = (event as any).content_block;
+          if (content?.type === 'text' && content?.text) {
+            yield content.text;
+          }
+        } else if (event.type === 'message_delta') {
+          const delta = (event as any).delta;
+          if (delta?.text) {
+            yield delta.text;
+          }
+        }
       }
       
-      console.log('[AnthropicProvider.streamChat] Chunked streaming complete');
+      console.log(`[AnthropicProvider.streamChat] Stream complete. Total events: ${chunkCount}`);
+      if (chunkCount === 0) {
+        console.error('[AnthropicProvider.streamChat] WARNING: No events received from stream!');
+        console.error('[AnthropicProvider.streamChat] Sample events:', JSON.stringify(allEventsForDebug.slice(0, 10), null, 2));
+      }
     } catch (error) {
-      console.error('[AnthropicProvider.streamChat] Error:', error);
+      console.error('[AnthropicProvider.streamChat] Stream error:', error);
       throw error;
     }
   }

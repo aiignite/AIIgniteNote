@@ -1,5 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
+import katex from 'katex';
+import 'katex/dist/katex.css';
+
+// Set KaTeX to window for Quill formula support
+if (typeof window !== 'undefined') {
+  (window as any).katex = katex;
+}
 
 interface RichTextEditorProps {
   value: string;
@@ -15,6 +22,8 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
     // Robust dynamic import
     import('react-quill')
       .then(mod => {
+        // Import Quill CSS styles
+        import('react-quill/dist/quill.snow.css');
         // Handle different export types
         const Component = mod.default || mod;
         setQuillComponent(() => Component);
@@ -32,19 +41,26 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
 
   const modules = {
     toolbar: [
-      [{ 'header': [1, 2, 3, false] }],
-      ['bold', 'italic', 'underline', 'strike', 'blockquote'],
-      [{'list': 'ordered'}, {'list': 'bullet'}],
-      ['link', 'image', 'code-block'],
+      [{ 'font': [] }, { 'size': [] }],
+      ['bold', 'italic', 'underline', 'strike'],
+      [{ 'color': [] }, { 'background': [] }],
+      [{ 'script': 'super' }, { 'script': 'sub' }],
+      [{ 'header': '1' }, { 'header': '2' }, 'blockquote', 'code-block'],
+      [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'indent': '-1' }, { 'indent': '+1' }],
+      [{ 'direction': 'rtl' }, { 'align': [] }],
+      ['link', 'image', 'video', 'formula'],
       ['clean']
     ],
   };
 
   const formats = [
-    'header',
-    'bold', 'italic', 'underline', 'strike', 'blockquote',
-    'list', 'bullet',
-    'link', 'image', 'code-block'
+    'font', 'size',
+    'bold', 'italic', 'underline', 'strike',
+    'color', 'background',
+    'script', 'header', 'blockquote', 'code-block',
+    'list', 'bullet', 'indent',
+    'direction', 'align',
+    'link', 'image', 'video', 'formula'
   ];
 
   // Handle Quill onChange with validation

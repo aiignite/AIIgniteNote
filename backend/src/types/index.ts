@@ -60,6 +60,7 @@ export interface NoteCreateInput {
   noteType: NoteType;
   folderId?: string;
   workspaceId?: string;
+  tags?: string[];
 }
 
 export interface NoteUpdateInput {
@@ -68,6 +69,7 @@ export interface NoteUpdateInput {
   noteType?: NoteType;
   folderId?: string;
   isFavorite?: boolean;
+  tags?: Array<{ name: string; color?: string }>;
 }
 
 export interface NotesListParams {
