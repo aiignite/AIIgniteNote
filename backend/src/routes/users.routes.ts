@@ -29,6 +29,13 @@ router.get('/profile', authenticate, authController.getProfile);
 router.put('/profile', authenticate, validate(updateProfileSchema), authController.updateProfile);
 
 /**
+ * @route   DELETE /api/users/profile
+ * @desc    Delete user account
+ * @access  Private
+ */
+router.delete('/profile', authenticate, authController.deleteAccount);
+
+/**
  * @route   GET /api/users/ai-settings
  * @desc    Get user AI settings
  * @access  Private
