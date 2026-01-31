@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import 'simple-mind-map/dist/simpleMindMap.esm.css';
 
 interface MindMapEditorProps {
   value: string;
@@ -17,8 +18,27 @@ const DEFAULT_DATA = {
 const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mindMapRef = useRef<any>(null);
+  const ignoreInitialChangeRef = useRef(true);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentTheme, setCurrentTheme] = useState(darkMode ? 'dark' : 'default');
+  const [currentLayout, setCurrentLayout] = useState('logicalStructure');
+  const [themeOptions, setThemeOptions] = useState<Array<{ id: string; name: string; dark?: boolean }>>([
+    { id: 'default', name: 'Default' },
+  ]);
+
+  const layouts = [
+    { id: 'logicalStructure', name: 'Logical Structure' },
+    { id: 'logicalStructureLeft', name: 'Logical Structure (Left)' },
+    { id: 'mindMap', name: 'Mind Map' },
+    { id: 'catalogOrganization', name: 'Catalog Organization' },
+    { id: 'organizationStructure', name: 'Organization' },
+    { id: 'timeline', name: 'Timeline' },
+    { id: 'timeline2', name: 'Timeline (Alternate)' },
+    { id: 'fishbone', name: 'Fishbone' },
+    { id: 'fishbone2', name: 'Fishbone (Head/Tail)' },
+    { id: 'rightFishbone', name: 'Fishbone (Right)' },
+  ];
 
   useEffect(() => {
     let isMounted = true;
@@ -28,10 +48,44 @@ const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode
       if (!containerRef.current) return;
 
       try {
-        // Dynamically import simple-mind-map to prevent top-level module errors
         // @ts-ignore
         const module = await import('simple-mind-map');
         const SimpleMindMap: any = module.default || module;
+
+        const [themesModule, themeListModule, selectModule, dragModule, exportModule] = await Promise.all([
+          import('simple-mind-map-plugin-themes'),
+          import('simple-mind-map-plugin-themes/themeList'),
+          import('simple-mind-map/src/plugins/Select.js'),
+          import('simple-mind-map/src/plugins/Drag.js'),
+          import('simple-mind-map/src/plugins/Export.js'),
+        ]);
+
+        const Themes = (themesModule as any).default || themesModule;
+        Themes.init(SimpleMindMap);
+
+        const themeList = (themeListModule as any).default || themeListModule;
+        const normalizedThemes = [
+          { id: 'default', name: 'Default', dark: false },
+          ...((themeList || []).map((theme: any) => ({
+            id: theme.value,
+            name: theme.name || theme.value,
+            dark: theme.dark,
+          }))),
+        ];
+
+        if (isMounted) {
+          setThemeOptions(normalizedThemes);
+          if (!normalizedThemes.some((theme: any) => theme.id === currentTheme)) {
+            setCurrentTheme(darkMode ? 'dark' : 'default');
+          }
+        }
+
+        const SelectPlugin = (selectModule as any).default || selectModule;
+        const DragPlugin = (dragModule as any).default || dragModule;
+        const ExportPlugin = (exportModule as any).default || exportModule;
+        SimpleMindMap.usePlugin(SelectPlugin);
+        SimpleMindMap.usePlugin(DragPlugin);
+        SimpleMindMap.usePlugin(ExportPlugin);
 
         if (!isMounted) return;
 
@@ -71,16 +125,23 @@ const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode
             const mindMap = new SimpleMindMap({
               el: containerRef.current,
               data: initialData,
-              theme: darkMode ? 'dark' : 'classic',
-              layout: 'logicalStructure',
+              theme: currentTheme,
+              layout: currentLayout,
               keyboard: true,
               readonly: false,
+              enableCtrlKeyNodeSelection: true,
+              useLeftKeySelectionRightKeyDrag: false,
             });
 
             mindMapRef.current = mindMap;
+            ignoreInitialChangeRef.current = true;
 
             mindMap.on('data_change', () => {
               const currentData = mindMap.getData();
+              if (ignoreInitialChangeRef.current) {
+                ignoreInitialChangeRef.current = false;
+                return;
+              }
               if (currentData) {
                 onChange(JSON.stringify(currentData));
               }
@@ -133,34 +194,77 @@ const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode
     };
   }, []);
 
+  useEffect(() => {
+    if (!themeOptions.length) return;
+    if (darkMode && currentTheme === 'default') {
+      if (themeOptions.some((theme) => theme.id === 'dark')) {
+        setCurrentTheme('dark');
+      }
+    } else if (!darkMode && currentTheme === 'dark') {
+      setCurrentTheme('default');
+    }
+  }, [darkMode, themeOptions, currentTheme]);
+
   // Handle Theme Change
   useEffect(() => {
-    if (mindMapRef.current) {
-      mindMapRef.current.setTheme(darkMode ? 'dark' : 'classic');
+    if (mindMapRef.current && currentTheme) {
+      mindMapRef.current.setTheme(currentTheme);
     }
-  }, [darkMode]);
+  }, [currentTheme]);
 
-  const handleToolbarAction = (action: string) => {
-    if (!mindMapRef.current) return;
+  useEffect(() => {
+    if (mindMapRef.current && currentLayout) {
+      mindMapRef.current.setLayout(currentLayout);
+    }
+  }, [currentLayout]);
+
+  const handleToolbarAction = (action: string, value?: string) => {
     const mm = mindMapRef.current;
     
     // Safety check for renderer/activeNodeList
-    if (!mm.renderer || !mm.renderer.activeNodeList) return;
-    
-    const activeNode = mm.renderer.activeNodeList[0];
+    const activeNode = mm.renderer?.activeNodeList?.[0];
 
     switch (action) {
       case 'add_child':
-        if (activeNode) mm.execCommand('INSERT_CHILD_NODE');
+        mm?.execCommand('INSERT_CHILD_NODE');
         break;
       case 'add_sibling':
-        if (activeNode) mm.execCommand('INSERT_NODE');
+        mm?.execCommand('INSERT_NODE');
         break;
       case 'delete':
-        if (activeNode) mm.execCommand('REMOVE_NODE');
+        mm?.execCommand('REMOVE_NODE');
         break;
       case 'fit':
-        mm.view.fit();
+        mm?.view.fit();
+        break;
+      case 'zoom_in':
+        mm?.view.enlarge();
+        break;
+      case 'zoom_out':
+        mm?.view.narrow();
+        break;
+      case 'set_theme':
+        if (value) {
+          setCurrentTheme(value);
+          mm?.setTheme(value);
+        }
+        break;
+      case 'set_layout':
+        if (value) {
+          setCurrentLayout(value);
+          mm?.setLayout(value);
+        }
+        break;
+      case 'export_png':
+        mm?.export('png', true, 'mindmap');
+        break;
+      case 'export_json':
+        mm?.export('json', true, 'mindmap');
+        break;
+      case 'clear':
+        if (confirm('Are you sure you want to clear the entire mind map?')) {
+          mm?.setData(DEFAULT_DATA);
+        }
         break;
     }
   };
@@ -185,33 +289,108 @@ const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode
       )}
       
       {/* Toolbar */}
-      <div className="h-10 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-[#15232a] flex items-center px-4 gap-2 z-10">
-        <button onClick={() => handleToolbarAction('add_child')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors" title="Add Child (Tab)">
-          <span className="material-symbols-outlined text-sm">subdirectory_arrow_right</span>
-          <span className="text-xs font-medium">Child</span>
-        </button>
-        <button onClick={() => handleToolbarAction('add_sibling')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors" title="Add Sibling (Enter)">
-          <span className="material-symbols-outlined text-sm">add</span>
-          <span className="text-xs font-medium">Sibling</span>
-        </button>
-        <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></div>
-        <button onClick={() => handleToolbarAction('delete')} className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete Node (Delete/Backspace)">
-          <span className="material-symbols-outlined text-sm">delete</span>
-        </button>
-        <button onClick={() => handleToolbarAction('fit')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors ml-auto" title="Fit to View">
-          <span className="material-symbols-outlined text-sm">filter_center_focus</span>
-        </button>
+      <div className="flex-none border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-[#15232a] flex flex-wrap items-center px-4 py-1 gap-1 z-10 overflow-x-auto min-h-12">
+        {/* Node Operations */}
+        <div className="flex items-center gap-1 pr-2 border-r border-gray-200 dark:border-gray-700 h-8">
+          <button onClick={() => handleToolbarAction('add_child')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors" title="Add Child (Tab)">
+            <span className="material-symbols-outlined text-sm">subdirectory_arrow_right</span>
+            <span className="text-xs font-medium hidden sm:inline">Child</span>
+          </button>
+          <button onClick={() => handleToolbarAction('add_sibling')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors" title="Add Sibling (Enter)">
+            <span className="material-symbols-outlined text-sm">add</span>
+            <span className="text-xs font-medium hidden sm:inline">Sibling</span>
+          </button>
+          <button onClick={() => handleToolbarAction('delete')} className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete Node (Delete)">
+            <span className="material-symbols-outlined text-sm">delete</span>
+          </button>
+        </div>
+
+        {/* View Controls */}
+        <div className="flex items-center gap-1 px-2 border-r border-gray-200 dark:border-gray-700 h-8">
+          <button onClick={() => handleToolbarAction('zoom_in')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Zoom In">
+            <span className="material-symbols-outlined text-sm">zoom_in</span>
+          </button>
+          <button onClick={() => handleToolbarAction('zoom_out')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Zoom Out">
+            <span className="material-symbols-outlined text-sm">zoom_out</span>
+          </button>
+          <button onClick={() => handleToolbarAction('fit')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Fit to View">
+            <span className="material-symbols-outlined text-sm">filter_center_focus</span>
+          </button>
+        </div>
+
+        {/* Style Selection */}
+        <div className="flex items-center gap-2 px-2 border-r border-gray-200 dark:border-gray-700 h-8">
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-gray-400 font-bold uppercase">Theme</span>
+            <select 
+              value={currentTheme}
+              onChange={(e) => handleToolbarAction('set_theme', e.target.value)}
+              className="text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 outline-none focus:border-primary"
+            >
+              {themeOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-gray-400 font-bold uppercase">Layout</span>
+            <select 
+              value={currentLayout}
+              onChange={(e) => handleToolbarAction('set_layout', e.target.value)}
+              className="text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 outline-none focus:border-primary"
+            >
+              {layouts.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Export */}
+        <div className="flex items-center gap-1 px-2 h-8 ml-auto">
+          <button onClick={() => handleToolbarAction('export_png')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors" title="Export as Image">
+            <span className="material-symbols-outlined text-sm">image</span>
+            <span className="text-xs font-medium hidden sm:inline">PNG</span>
+          </button>
+          <button onClick={() => handleToolbarAction('export_json')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors" title="Export as JSON">
+            <span className="material-symbols-outlined text-sm">javascript</span>
+            <span className="text-xs font-medium hidden sm:inline">JSON</span>
+          </button>
+          <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+          <button onClick={() => handleToolbarAction('clear')} className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Clear Map">
+            <span className="material-symbols-outlined text-sm">layers_clear</span>
+          </button>
+          <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+          <button 
+            onClick={() => {
+              const el = containerRef.current?.parentElement;
+              if (el) {
+                if (document.fullscreenElement) {
+                  document.exitFullscreen();
+                } else {
+                  el.requestFullscreen();
+                }
+              }
+            }}
+            className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors"
+            title="Focus Mode"
+          >
+            <span className="material-symbols-outlined text-sm">fullscreen</span>
+            <span className="text-xs font-medium hidden sm:inline">Focus</span>
+          </button>
+        </div>
       </div>
 
       {/* Editor Canvas */}
-      <div ref={containerRef} className="flex-1 w-full h-full relative cursor-grab active:cursor-grabbing" />
+      <div
+        ref={containerRef}
+        onContextMenu={(event) => event.preventDefault()}
+        className="flex-1 w-full h-full relative cursor-grab active:cursor-grabbing"
+      />
       
       {/* Shortcuts Help */}
-      <div className="absolute bottom-4 right-4 bg-white/90 dark:bg-gray-800/90 p-3 rounded-lg shadow-lg border border-gray-100 dark:border-gray-700 text-[10px] text-gray-500 pointer-events-none backdrop-blur-sm z-10">
+      <div className="absolute bottom-4 right-4 bg-white/90 dark:bg-gray-800/90 p-3 rounded-lg shadow-lg border border-gray-100 dark:border-gray-700 text-[10px] text-gray-500 pointer-events-none backdrop-blur-sm z-10 transition-opacity hover:opacity-0">
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
           <span className="font-bold">Tab</span> <span>Add Child</span>
           <span className="font-bold">Enter</span> <span>Add Sibling</span>
           <span className="font-bold">Del</span> <span>Remove</span>
+          <span className="font-bold">Ctrl + +/-</span> <span>Zoom</span>
           <span className="font-bold">Drag</span> <span>Move Canvas</span>
         </div>
       </div>
