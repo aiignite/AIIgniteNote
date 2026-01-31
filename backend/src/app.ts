@@ -64,8 +64,15 @@ app.use(helmet({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Compression middleware
-app.use(compression());
+// Compression middleware (disable for SSE to ensure streaming)
+app.use(compression({
+  filter: (req, res) => {
+    if (req.path === '/api/ai/chat/stream') {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -74,6 +81,7 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/auth/login') || req.path.startsWith('/auth/refresh'),
 });
 app.use('/api', limiter);
 

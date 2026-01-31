@@ -13,6 +13,13 @@ const createNoteSchema = z.object({
     noteType: z.nativeEnum(NoteType).optional(),
     folderId: z.string().optional(),
     workspaceId: z.string().optional(),
+    tags: z.array(z.union([
+      z.string(),
+      z.object({
+        name: z.string(),
+        color: z.string().optional(),
+      })
+    ])).optional(),
   }),
 });
 
@@ -23,6 +30,13 @@ const updateNoteSchema = z.object({
     noteType: z.nativeEnum(NoteType).optional(),
     folderId: z.string().optional(),
     isFavorite: z.boolean().optional(),
+    tags: z.array(z.union([
+      z.string(),
+      z.object({
+        name: z.string(),
+        color: z.string().optional(),
+      })
+    ])).optional(),
   }),
 });
 

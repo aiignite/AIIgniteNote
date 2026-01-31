@@ -246,15 +246,15 @@ export class TemplateController {
       // Get template first
       const template = await templateService.getById(req.userId, templateId);
 
-      // Create note using template prompt as content
-      const templateNoteType = (template as any).noteType || NoteType.MARKDOWN;
-      const note = await notesService.create(req.userId, {
-        title: template.name,
-        content: `# ${template.name}\n\n${template.prompt}`,
-        noteType: templateNoteType as NoteType,
-        folderId: req.body.folderId,
-        workspaceId: req.body.workspaceId,
-      });
+    // Create note using template content
+    const templateNoteType = (template as any).noteType || NoteType.MARKDOWN;
+    const note = await notesService.create(req.userId, {
+      title: `New ${template.name}`,
+      content: template.prompt,
+      noteType: templateNoteType as NoteType,
+      folderId: req.body.folderId,
+      workspaceId: req.body.workspaceId,
+    });
 
       // Increment template usage count
       await templateService.incrementUsage(template.id);
