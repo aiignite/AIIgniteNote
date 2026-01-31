@@ -23,61 +23,38 @@ interface AIProviderOption {
   defaultModel: string;
 }
 
+interface AIAssistantOption {
+  id: string;
+  name: string;
+  role?: string;
+  description?: string;
+  desc?: string;
+  avatar?: string;
+  icon?: string;
+  model?: string;
+  systemPrompt?: string;
+  isSystem?: boolean;
+}
+
 interface AIAttachment {
   id: string;
   file: File;
   uploading: boolean;
   error?: string;
+  base64?: string;
+  mimeType?: string;
 }
 
 const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
   const { t } = useLanguageStore();
 
-  const AI_PROVIDERS: AIProviderOption[] = [
-    {
-      id: 'GEMINI',
-      name: 'Google Gemini',
-      icon: 'auto_awesome',
-      models: ['gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'],
-      defaultModel: 'gemini-2.0-flash-exp'
-    },
-    {
-      id: 'ANTHROPIC',
-      name: 'Anthropic Claude',
-      icon: 'psychology',
-      models: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
-      defaultModel: 'claude-sonnet-4-20250514'
-    },
-    {
-      id: 'OPENAI',
-      name: 'OpenAI GPT',
-      icon: 'smart_toy',
-      models: ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
-      defaultModel: 'gpt-4o'
-    },
-    {
-      id: 'OLLAMA',
-      name: 'Ollama (Local)',
-      icon: 'dns',
-      models: ['llama3.2', 'mistral', 'codellama', 'phi3'],
-      defaultModel: 'llama3.2'
-    },
-    {
-      id: 'LMSTUDIO',
-      name: 'LM Studio (Local)',
-      icon: 'hub',
-      models: ['local-model', 'llama-3', 'mistral'],
-      defaultModel: 'local-model'
-    },
-  ];
-
-  const ASSISTANTS = [
-    { id: 'general', name: t.aiPanel.assistants.general, icon: 'auto_awesome', role: 'General', desc: 'Helpful for any task', model: 'gemini-2.0-flash-exp' },
-    { id: 'coder', name: t.aiPanel.assistants.coder, icon: 'code', role: 'Engineering', desc: 'Expert in software design', model: 'claude-3-5-sonnet-20241022' },
-    { id: 'writer', name: t.aiPanel.assistants.writer, icon: 'edit_note', role: 'Marketing', desc: 'Refines tone & grammar', model: 'gpt-4o' },
-    { id: 'data', name: t.aiPanel.assistants.data, icon: 'analytics', role: 'Business', desc: 'Insights from data', model: 'gemini-1.5-pro' },
-    { id: 'pm', name: t.aiPanel.assistants.pm, icon: 'rocket_launch', role: 'Product', desc: 'Strategy & prioritization', model: 'gpt-4o' },
-  ];
+  const AI_PROVIDER_ICON_MAP: Record<string, string> = {
+    GEMINI: 'auto_awesome',
+    ANTHROPIC: 'psychology',
+    OPENAI: 'smart_toy',
+    OLLAMA: 'dns',
+    LMSTUDIO: 'hub',
+  };
 
   // State
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -88,19 +65,19 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedProvider, setSelectedProvider] = useState<AIProvider>('GEMINI');
-  const [selectedModel, setSelectedModel] = useState(AI_PROVIDERS[0].defaultModel);
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider | null>(null);
+  const [selectedModel, setSelectedModel] = useState('');
   const [showProviderMenu, setShowProviderMenu] = useState(false);
   const [showModelMenu, setShowModelMenu] = useState(false);
 
   // Database models state
   const [dbModels, setDbModels] = useState<any[]>([]);
 
-  // Custom Assistants state
-  const [customAssistants, setCustomAssistants] = useState<any[]>([]);
+  // Assistants loaded from database
+  const [dbAssistants, setDbAssistants] = useState<AIAssistantOption[]>([]);
 
   // Assistant Dropdown State
-  const [currentAssistant, setCurrentAssistant] = useState(ASSISTANTS[0]);
+  const [currentAssistant, setCurrentAssistant] = useState<AIAssistantOption | null>(null);
   const [showAssistantMenu, setShowAssistantMenu] = useState(false);
 
   // Conversation History State
@@ -249,45 +226,56 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
     loadDbModels();
   }, []);
 
-  // Load custom assistants from IndexedDB
+  // Load assistants from database (API first, IndexedDB fallback)
   useEffect(() => {
-    const loadCustomAssistants = async () => {
+    const loadAssistants = async () => {
       try {
-        const dbAssistants = await indexedDB.getAIAssistants();
-        if (dbAssistants && dbAssistants.length > 0) {
-          setCustomAssistants(dbAssistants);
-          console.log('[AIPanel] Loaded custom assistants from IndexedDB:', dbAssistants);
+        const response = await api.getAIAssistants() as any;
+        if (response.success && response.data) {
+          const allAssistants = [
+            ...(response.data.system || []),
+            ...(response.data.custom || [])
+          ];
+          setDbAssistants(allAssistants);
+          await indexedDB.clearAndCacheAssistants(allAssistants);
+          if (!currentAssistant && allAssistants.length > 0) {
+            setCurrentAssistant(allAssistants[0]);
+          }
+          return;
         }
       } catch (error) {
-        console.error('[AIPanel] Failed to load custom assistants:', error);
+        console.error('[AIPanel] Failed to load assistants from API:', error);
+      }
+
+      try {
+        const cachedAssistants = await indexedDB.getAIAssistants();
+        if (cachedAssistants && cachedAssistants.length > 0) {
+          setDbAssistants(cachedAssistants);
+          if (!currentAssistant && cachedAssistants.length > 0) {
+            setCurrentAssistant(cachedAssistants[0]);
+          }
+          console.log('[AIPanel] Loaded assistants from IndexedDB:', cachedAssistants);
+        }
+      } catch (error) {
+        console.error('[AIPanel] Failed to load assistants from IndexedDB:', error);
       }
     };
-    loadCustomAssistants();
+    loadAssistants();
   }, []);
 
-  // Merge hardcoded providers with database models
+  // Merge database models into providers list
   const mergedProviders = useMemo(() => {
     const providerMap = new Map<AIProvider, AIProviderOption>();
-
-    // Initialize with hardcoded providers
-    AI_PROVIDERS.forEach(p => providerMap.set(p.id, { ...p }));
 
     // Add/update with database models
     dbModels.forEach((model: any) => {
       const providerId = model.provider as AIProvider;
       if (!providerMap.has(providerId)) {
         // Create new provider entry
-        const iconMap: Record<string, string> = {
-          GEMINI: 'auto_awesome',
-          ANTHROPIC: 'psychology',
-          OPENAI: 'smart_toy',
-          OLLAMA: 'dns',
-          LMSTUDIO: 'hub',
-        };
         providerMap.set(providerId, {
           id: providerId,
           name: providerId.charAt(0) + providerId.slice(1).toLowerCase().replace('_', ' '),
-          icon: iconMap[providerId] || 'smart_toy',
+          icon: AI_PROVIDER_ICON_MAP[providerId] || 'smart_toy',
           models: [model.modelId],
           defaultModel: model.modelId,
         });
@@ -719,11 +707,12 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
 
   // Update available models when provider changes
   useEffect(() => {
-    const provider = AI_PROVIDERS.find(p => p.id === selectedProvider);
+    if (!selectedProvider) return;
+    const provider = mergedProviders.find(p => p.id === selectedProvider);
     if (provider) {
       setSelectedModel(provider.defaultModel);
     }
-  }, [selectedProvider]);
+  }, [selectedProvider, mergedProviders]);
 
   // Load conversation history
   useEffect(() => {
@@ -884,14 +873,6 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Update assistant list when language changes
-  useEffect(() => {
-    setCurrentAssistant(prev => {
-      const found = ASSISTANTS.find(a => a.id === prev.id);
-      return found || ASSISTANTS[0];
-    });
-  }, [t]);
-
   // Auto-scroll to bottom
   useEffect(() => {
     if (scrollRef.current) {
@@ -963,6 +944,10 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
 
   const handleSend = async () => {
     if (!input.trim() || loading) return;
+    if (!selectedProvider || !selectedModel) {
+      alert('请先选择可用模型');
+      return;
+    }
 
     console.log('[AIPanel] handleSend called:', {
       inputLength: input.length,
@@ -1010,10 +995,19 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
       }));
 
       // Add system message with assistant context
-      apiMessages.unshift({
-        role: 'system',
-        content: `You are ${currentAssistant.name}, an AI assistant specializing in ${currentAssistant.role.toLowerCase()}. ${currentAssistant.desc}`
-      });
+      if (currentAssistant?.systemPrompt) {
+        apiMessages.unshift({
+          role: 'system',
+          content: currentAssistant.systemPrompt
+        });
+      } else if (currentAssistant?.name) {
+        const roleText = currentAssistant.role ? ` specializing in ${currentAssistant.role.toLowerCase()}` : '';
+        const descText = currentAssistant.description || currentAssistant.desc || '';
+        apiMessages.unshift({
+          role: 'system',
+          content: `You are ${currentAssistant.name}, an AI assistant${roleText}. ${descText}`.trim()
+        });
+      }
 
       // Add note context if available
       if (activeNote?.content) {
@@ -1031,6 +1025,17 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
           role: 'system',
           content: `User has attached the following files:\n${attachmentInfo}\n\nAttachment IDs: ${attachmentIds.join(', ')}`
         });
+
+        const imageAttachments = attachments.filter(a => a.base64 && a.file.type.startsWith('image/'));
+        if (imageAttachments.length > 0) {
+          const imagePayload = imageAttachments.map((a, idx) => (
+            `Image ${idx + 1}: ${a.file.name}\nMIME: ${a.mimeType || a.file.type}\nBase64: ${a.base64}`
+          )).join('\n\n');
+          apiMessages.splice(1, 0, {
+            role: 'system',
+            content: `User provided image data in base64:\n${imagePayload}`
+          });
+        }
       }
 
       // Call API with real provider and model - with retry logic
@@ -1054,18 +1059,24 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
           },
           // onChunk callback
           (chunk, done, conversationId) => {
+            console.log('[AIPanel onChunk] Received chunk:', { chunk: chunk.substring(0, 30), done, conversationId, accumulatedLength: accumulatedText.length });
             accumulatedText += chunk;
             finalConversationId = conversationId;
+            console.log('[AIPanel onChunk] After append, accumulated length:', accumulatedText.length);
 
             setMessages(prev => {
               const newMessages = [...prev];
               const lastMsgIndex = newMessages.length - 1;
+              console.log('[AIPanel onChunk] Updating message at index', lastMsgIndex, 'with text length:', accumulatedText.length);
               newMessages[lastMsgIndex] = { ...newMessages[lastMsgIndex], text: accumulatedText };
               return newMessages;
             });
           },
           // onComplete callback
           async (conversationId) => {
+            console.log('[AIPanel] Stream completed with conversationId:', conversationId);
+            
+            // Set final timestamp for response message
             setMessageTimestamps(prev => {
               const newMessagesCount = updatedMessages.length;
               return {
@@ -1074,9 +1085,12 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
               };
             });
             
-            // Refresh messages to get IDs from backend
-            if (conversationId) {
-              await loadConversationMessages(conversationId);
+            // Only reload if we don't have a local conversation ID
+            // to avoid overwriting the streamed content
+            if (conversationId && !currentConversationId) {
+              console.log('[AIPanel] First conversation created, setting ID:', conversationId);
+              setCurrentConversationId(conversationId);
+              // Don't reload messages - they're already in the UI
             }
           },
           // onError callback
@@ -1113,14 +1127,20 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
         setLastUserPrompt(userPrompt);
         setLastApiMessages(apiMessages);
 
-      await loadConversations();
-      
-      if (finalConversationId) {
-        const convRes = await api.getAIConversation(finalConversationId) as any;
-        if (convRes.success) {
-          await indexedDB.cacheConversation(convRes.data);
+        // Only reload conversations if needed
+        await loadConversations();
+        
+        // Cache conversation to IndexedDB if created
+        if (finalConversationId) {
+          try {
+            const convRes = await api.getAIConversation(finalConversationId) as any;
+            if (convRes.success) {
+              await indexedDB.cacheConversation(convRes.data);
+            }
+          } catch (error) {
+            console.warn('Failed to cache conversation:', error);
+          }
         }
-      }
 
       setAttachments([]);
       } else {
@@ -1252,6 +1272,10 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
 
   const handleRegenerate = async () => {
     if (!lastUserPrompt || !lastApiMessages || loading || regenerating) return;
+    if (!selectedProvider || !selectedModel) {
+      alert('请先选择可用模型');
+      return;
+    }
 
     setRegenerating(true);
     stopSignalRef.current = false;
@@ -1419,6 +1443,33 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
     }
   };
 
+  const readImageAsDataUrl = (file: File, maxSize = 1024, quality = 0.85): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Failed to get canvas context'));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const mimeType = ['image/jpeg', 'image/webp'].includes(file.type) ? file.type : 'image/png';
+          const dataUrl = canvas.toDataURL(mimeType, quality);
+          resolve(dataUrl);
+        };
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = reader.result as string;
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
   // Handle file attachments
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -1440,6 +1491,22 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
       }));
 
       setAttachments(prev => [...prev, ...newAttachments]);
+
+      // Convert image files to base64 for model input
+      for (const attachment of newAttachments) {
+        if (attachment.file.type.startsWith('image/')) {
+          try {
+            const dataUrl = await readImageAsDataUrl(attachment.file);
+            setAttachments(prev => prev.map(a =>
+              a.id === attachment.id
+                ? { ...a, base64: dataUrl, mimeType: attachment.file.type }
+                : a
+            ));
+          } catch (error) {
+            console.error('Failed to read image as base64:', error);
+          }
+        }
+      }
 
       // Upload each file
       for (const attachment of newAttachments) {
@@ -1484,7 +1551,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
     return 'attach_file';
   };
 
-  const handleAssistantSelect = async (assistant: typeof ASSISTANTS[0] & { model?: string }) => {
+  const handleAssistantSelect = async (assistant: AIAssistantOption) => {
     setCurrentAssistant(assistant);
     setShowAssistantMenu(false);
 
@@ -1507,7 +1574,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
 
     setMessages(prev => [...prev,
       { role: 'model',
-        text: `Switched to **${assistant.name}**. I'm ready to help with ${assistant.role.toLowerCase()} tasks.`,
+        text: `Switched to **${assistant.name}**. I'm ready to help with ${(assistant.role || 'general').toLowerCase()} tasks.`,
         type: 'text'
       }
     ]);
@@ -1555,8 +1622,9 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
   };
 
   const handleNewChat = () => {
+    const greetingName = currentAssistant?.name ? `我是${currentAssistant.name}，` : '';
     setMessages([
-      { role: 'model', text: `你好！我是${currentAssistant.name}，很高兴为你服务。有什么我可以帮助你的吗？`, type: 'text' }
+      { role: 'model', text: `你好！${greetingName}很高兴为你服务。有什么我可以帮助你的吗？`, type: 'text' }
     ]);
     setCurrentConversationId(null);
     setInput('');
@@ -1595,11 +1663,11 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
           date: new Date().toISOString(),
           provider: currentProviderData?.name,
           model: selectedModel,
-          assistant: {
+          assistant: currentAssistant ? {
             name: currentAssistant.name,
             role: currentAssistant.role,
-            description: currentAssistant.desc
-          },
+            description: currentAssistant.description || currentAssistant.desc
+          } : null,
           messageCount: messages.length,
           totalTokens: messageStats.totalTokens
         },
@@ -1620,7 +1688,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
       content += `${'='.repeat(50)}\n\n`;
       content += `Date: ${new Date().toLocaleString()}\n`;
       content += `Provider: ${currentProviderData?.name} (${selectedModel})\n`;
-      content += `Assistant: ${currentAssistant.name}\n\n`;
+      content += `Assistant: ${currentAssistant?.name || 'N/A'}\n\n`;
       content += `${'='.repeat(50)}\n\n`;
 
       messages.forEach((msg, index) => {
@@ -1638,7 +1706,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
       content = `# AI Conversation\n\n`;
       content += `**Date:** ${new Date().toLocaleString()}\n`;
       content += `**Provider:** ${currentProviderData?.name} • ${selectedModel}\n`;
-      content += `**Assistant:** ${currentAssistant.name} (${currentAssistant.role})\n`;
+      content += `**Assistant:** ${currentAssistant?.name || 'N/A'} (${currentAssistant?.role || 'N/A'})\n`;
       content += `**Messages:** ${messages.length}\n`;
       content += `**Tokens:** ~${messageStats.totalTokens}\n\n`;
       content += `---\n\n`;
@@ -1814,6 +1882,15 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
     }
   };
 
+  const systemAssistants = useMemo(
+    () => dbAssistants.filter(a => a.isSystem),
+    [dbAssistants]
+  );
+  const customAssistants = useMemo(
+    () => dbAssistants.filter(a => !a.isSystem),
+    [dbAssistants]
+  );
+
   const currentProviderData = mergedProviders.find(p => p.id === selectedProvider);
 
   // Filter and sort conversations (pinned first)
@@ -1856,11 +1933,11 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
             className="w-full flex items-center gap-2 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 p-1.5 -ml-1.5 rounded-lg transition-colors"
           >
              <div className="size-6 rounded-md bg-primary/10 text-primary flex items-center justify-center">
-                <span className="material-symbols-outlined text-sm">{currentAssistant.icon}</span>
+                <span className="material-symbols-outlined text-sm">{currentAssistant?.avatar || currentAssistant?.icon || 'smart_toy'}</span>
              </div>
              <div className="flex flex-col items-start flex-1">
-               <span className="text-sm font-bold text-gray-900 dark:text-gray-100 leading-none">{currentAssistant.name}</span>
-               <span className="text-[9px] text-gray-400 font-medium">{currentAssistant.role}</span>
+               <span className="text-sm font-bold text-gray-900 dark:text-gray-100 leading-none">{currentAssistant?.name || '请选择助手'}</span>
+               <span className="text-[9px] text-gray-400 font-medium">{currentAssistant?.role || '—'}</span>
              </div>
              <span className={`material-symbols-outlined text-gray-400 text-lg transition-transform duration-200 ${showAssistantMenu ? 'rotate-180' : ''}`}>expand_more</span>
           </button>
@@ -1870,25 +1947,25 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
              <div className="absolute top-full left-0 mt-2 w-64 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden animate-in fade-in zoom-in-95 duration-200 z-50">
                 <div className="p-2 space-y-0.5 max-h-96 overflow-y-auto">
                   {/* System Assistants */}
-                  {ASSISTANTS.length > 0 && (
+                  {systemAssistants.length > 0 && (
                     <>
                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-3 py-2">System Assistants</p>
-                      {ASSISTANTS.map(ast => (
+                      {systemAssistants.map(ast => (
                           <button
                             key={ast.id}
                             onClick={() => handleAssistantSelect(ast)}
                             className={`w-full text-left px-3 py-2.5 flex items-center gap-3 rounded-lg transition-colors ${
-                              currentAssistant.id === ast.id
+                              currentAssistant?.id === ast.id
                                 ? 'bg-primary/5 dark:bg-primary/10'
                                 : 'hover:bg-gray-50 dark:hover:bg-gray-800'
                             }`}
                           >
-                            <span className={`material-symbols-outlined text-lg ${currentAssistant.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.icon}</span>
+                            <span className={`material-symbols-outlined text-lg ${currentAssistant?.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || ast.icon || 'smart_toy'}</span>
                             <div className="flex-1">
-                              <p className={`text-sm ${currentAssistant.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
-                              <p className="text-[9px] text-gray-400">{ast.desc}</p>
+                              <p className={`text-sm ${currentAssistant?.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
+                              <p className="text-[9px] text-gray-400">{ast.description || ast.desc || ast.role || 'Assistant'}</p>
                             </div>
-                            {currentAssistant.id === ast.id && <span className="material-symbols-outlined text-primary text-sm">check</span>}
+                            {currentAssistant?.id === ast.id && <span className="material-symbols-outlined text-primary text-sm">check</span>}
                           </button>
                       ))}
                     </>
@@ -1903,17 +1980,17 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
                             key={ast.id}
                             onClick={() => handleAssistantSelect(ast)}
                             className={`w-full text-left px-3 py-2.5 flex items-center gap-3 rounded-lg transition-colors ${
-                              currentAssistant.id === ast.id
+                              currentAssistant?.id === ast.id
                                 ? 'bg-primary/5 dark:bg-primary/10'
                                 : 'hover:bg-gray-50 dark:hover:bg-gray-800'
                             }`}
                           >
-                            <span className={`material-symbols-outlined text-lg ${currentAssistant.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || 'smart_toy'}</span>
+                            <span className={`material-symbols-outlined text-lg ${currentAssistant?.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || 'smart_toy'}</span>
                             <div className="flex-1">
-                              <p className={`text-sm ${currentAssistant.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
+                              <p className={`text-sm ${currentAssistant?.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
                               <p className="text-[9px] text-gray-400">{ast.description || ast.role || 'Custom assistant'}</p>
                             </div>
-                            {currentAssistant.id === ast.id && <span className="material-symbols-outlined text-primary text-sm">check</span>}
+                            {currentAssistant?.id === ast.id && <span className="material-symbols-outlined text-primary text-sm">check</span>}
                           </button>
                       ))}
                     </>

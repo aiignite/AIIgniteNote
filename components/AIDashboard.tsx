@@ -41,7 +41,6 @@ const AIDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'Models' | 'Assistants' | 'Chat'>('Chat');
   const [inputText, setInputText] = useState('');
   const [models, setModels] = useState<any[]>([]);
-  const [providers, setProviders] = useState<any>(null);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [conversations, setConversations] = useState<any[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
@@ -54,9 +53,11 @@ const AIDashboard: React.FC = () => {
 
   // Chat 功能状态
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [currentConversationMeta, setCurrentConversationMeta] = useState<{ provider?: string; model?: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [aiSettings, setAiSettings] = useState<any>(null);
 
   // Refs for stream control
   const streamAbortControllerRef = useRef<AbortController | null>(null);
@@ -82,6 +83,7 @@ const AIDashboard: React.FC = () => {
           name: m.name,
           modelId: m.modelId,
           provider: m.provider,
+          endpoint: m.endpoint,
           desc: m.description || `${m.provider} model`,
           speed: m.speed || 'Fast',
           cost: m.cost || '$',
@@ -103,12 +105,17 @@ const AIDashboard: React.FC = () => {
         console.log('[Load] Assistants synced to IndexedDB:', allAssistants.length);
         
         // All assistants come from database - mark custom ones as deletable
-        setAssistants(allAssistants.map((a: any) => ({
+        const mappedAssistants = allAssistants.map((a: any) => ({
           ...a,
           isCustom: !a.isSystem,  // Only non-system assistants are deletable
-        })));
+        }));
+        setAssistants(mappedAssistants);
+        if (!currentAssistant && mappedAssistants.length > 0) {
+          setCurrentAssistant(mappedAssistants[0]);
+        }
         console.log('[Load] Assistants loaded:', allAssistants.length);
       }
+      setLoadingProviders(false);
     } catch (error) {
       console.error('[Load] Error loading data:', error);
       
@@ -125,15 +132,20 @@ const AIDashboard: React.FC = () => {
         
         const cachedAssistants = await indexedDB.getAIAssistants();
         if (cachedAssistants.length > 0) {
-          setAssistants(cachedAssistants.map((a: any) => ({
+          const mappedAssistants = cachedAssistants.map((a: any) => ({
             ...a,
             isCustom: !a.isSystem,
-          })));
+          }));
+          setAssistants(mappedAssistants);
+          if (!currentAssistant && mappedAssistants.length > 0) {
+            setCurrentAssistant(mappedAssistants[0]);
+          }
           console.log('[Load] Loaded assistants from IndexedDB cache:', cachedAssistants.length);
         }
       } catch (cacheError) {
         console.error('[Load] Failed to load from IndexedDB cache:', cacheError);
       }
+      setLoadingProviders(false);
     }
   };
 
@@ -174,29 +186,16 @@ const AIDashboard: React.FC = () => {
   const [assistants, setAssistants] = useState<AIAssistant[]>([]);
   
   // Default assistant for new chats (used when no assistant is selected)
-  const [currentAssistant, setCurrentAssistant] = useState<AIAssistant>({
-    id: 'default',
-    name: 'AI Assistant',
-    description: 'Helpful for any task',
-    role: 'General',
-    avatar: 'auto_awesome',
-    systemPrompt: 'You are a helpful AI assistant.',
-    category: 'General',
-    isSystem: true,
-    usageCount: 0,
-    model: undefined,  // Will use default model if not specified
-  });
+  const [currentAssistant, setCurrentAssistant] = useState<AIAssistant | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'updated' | 'created' | 'name' | 'messages'>('updated');
 
-  // Load available AI providers and models on mount
+  // Load available AI data on mount
   useEffect(() => {
     const loadAllData = async () => {
       // 先加载自定义模型（需要等待完成）
       await loadCustomModelsAndAssistants();
-
-      // 然后加载系统模型
-      await loadProviders();
+      await loadAISettings();
       await loadConversationHistory();
       
       // Initialize with greeting if starting fresh in Chat tab
@@ -213,27 +212,14 @@ const AIDashboard: React.FC = () => {
     loadAllData();
   }, []);
 
-  const loadProviders = async () => {
+  const loadAISettings = async () => {
     try {
-      setLoadingProviders(true);
-      const response = await api.getAIProviders() as any;
+      const response = await api.getAISettings() as any;
       if (response.success && response.data) {
-        setProviders(response.data);
-        // Build models list from providers
-        const modelsList = buildModelsList(response.data);
-        console.log('[loadProviders] System models loaded:', modelsList);
-
-        // 使用函数式更新来合并系统模型和当前状态中的自定义模型
-        setModels(prevModels => {
-          const customModels = prevModels.filter(m => m.isCustom);
-          console.log('[loadProviders] Current custom models:', customModels);
-          return [...modelsList, ...customModels];
-        });
+        setAiSettings(response.data);
       }
     } catch (error) {
-      console.error('Error loading providers:', error);
-    } finally {
-      setLoadingProviders(false);
+      console.error('Error loading AI settings:', error);
     }
   };
 
@@ -291,6 +277,14 @@ const AIDashboard: React.FC = () => {
 
     return filtered;
   }, [conversations, searchQuery, sortBy]);
+
+  const currentModelLabel = useMemo(() => {
+    const modelId = currentConversationMeta?.model || currentAssistant?.model || aiSettings?.defaultModel;
+    const dbModel = models.find((m: any) => m.modelId === modelId);
+    return dbModel?.name || modelId || '未选择模型';
+  }, [currentConversationMeta?.model, currentAssistant?.model, aiSettings?.defaultModel, models]);
+
+  const currentAssistantLabel = currentAssistant?.name || '未选择助手';
 
   // 模型操作处理器
   const handleSaveModel = async (data: any) => {
@@ -444,6 +438,10 @@ const AIDashboard: React.FC = () => {
 
   const handleNewChat = async (assistant?: AIAssistant) => {
     const targetAssistant = assistant || currentAssistant;
+    if (!targetAssistant) {
+      alert('No assistant available. Please create or sync an assistant first.');
+      return;
+    }
     console.log('[AIDashboard] handleNewChat called with assistant:', targetAssistant?.name);
     
     try {
@@ -469,6 +467,10 @@ const AIDashboard: React.FC = () => {
         
         // Set as current conversation
         setCurrentConversationId(newConversation.id);
+        setCurrentConversationMeta({
+          provider: newConversation.provider,
+          model: newConversation.model,
+        });
         
         // Initialize with greeting message
         setChatMessages([
@@ -492,6 +494,7 @@ const AIDashboard: React.FC = () => {
       console.error('[AIDashboard] Error creating new conversation:', error);
       // Fallback to local-only mode if API fails
       setCurrentConversationId(null);
+      setCurrentConversationMeta(null);
       setChatMessages([
         {
           role: 'model',
@@ -514,6 +517,10 @@ const AIDashboard: React.FC = () => {
     });
     try {
       setCurrentConversationId(conversation.id);
+      setCurrentConversationMeta({
+        provider: conversation.provider,
+        model: conversation.model,
+      });
       setActiveTab('Chat');
       console.log('[AIDashboard] Fetching conversation messages...');
       const response = await api.getAIConversation(conversation.id) as any;
@@ -541,7 +548,6 @@ const AIDashboard: React.FC = () => {
 
     const userMessage = inputText;
     setInputText('');
-    setAttachments([]);
     setIsGenerating(true);
     stopSignalRef.current = false;
 
@@ -550,22 +556,88 @@ const AIDashboard: React.FC = () => {
     const updatedMessages = [...chatMessages, newUserMessage, aiPlaceholderMsg];
     setChatMessages(updatedMessages);
 
-    // Determine provider and model from current assistant
-    let provider: any = 'GEMINI';
-    let model = 'gemini-1.5-flash';
+    // Determine provider and model from current conversation, assistant, or settings
+    let provider: any = currentConversationMeta?.provider;
+    let model = currentConversationMeta?.model;
 
-    if (currentAssistant.model) {
-      // Find the model in database models to get the provider
+    // Search models to find the correct provider for the current model
+    if (model) {
+      const dbModel = models.find((m: any) => m.modelId === model);
+      if (dbModel) {
+        provider = dbModel.provider;
+        console.log('[AIDashboard] Model found in cache, using provider:', provider);
+      }
+    }
+
+    if (!model && currentAssistant?.model) {
       const dbModel = models.find((m: any) => m.modelId === currentAssistant.model);
       if (dbModel) {
         provider = dbModel.provider;
         model = dbModel.modelId;
         console.log('[AIDashboard] Using assistant model config:', { provider, model });
+      } else {
+        model = currentAssistant.model;
+        // Even if not in local cache, let the backend try to resolve it
       }
+    }
+
+    if (!model && aiSettings?.defaultModel) {
+      const dbModel = models.find((m: any) => m.modelId === aiSettings.defaultModel);
+      if (dbModel) {
+        provider = dbModel.provider;
+        model = dbModel.modelId;
+      } else {
+        model = aiSettings.defaultModel;
+      }
+    }
+
+    if (!model && models.length > 0) {
+      model = models[0].modelId;
+      provider = models[0].provider;
+    }
+
+    if (model) {
+      const dbModel = models.find((m: any) => m.modelId === model);
+      if (dbModel) {
+        provider = dbModel.provider;
+      }
+    }
+
+    if (!model || !provider) {
+      setIsGenerating(false);
+      stopSignalRef.current = false;
+      alert('No available model found. Please add a model first.');
+      return;
     }
 
     // Build messages for API - exclude the AI placeholder
     const messagesForApi = updatedMessages.slice(0, -1);
+
+    // Convert image attachments to base64 for model input
+    if (attachments.length > 0) {
+      const imageFiles = attachments.filter(file => file.type.startsWith('image/'));
+      if (imageFiles.length > 0) {
+        const imagePayloads = await Promise.all(
+          imageFiles.map(async (file, idx) => {
+            try {
+              const base64 = await readImageAsDataUrl(file);
+              return `Image ${idx + 1}: ${file.name}\nMIME: ${file.type}\nBase64: ${base64}`;
+            } catch (error) {
+              console.error('Failed to read image as base64:', error);
+              return null;
+            }
+          })
+        );
+
+        const validPayloads = imagePayloads.filter(Boolean);
+        if (validPayloads.length > 0) {
+          messagesForApi.unshift({
+            role: 'system',
+            content: `User provided image data in base64:\n${validPayloads.join('\n\n')}`
+          } as any);
+        }
+      }
+    }
     const requestData = {
       provider,
       conversationId: currentConversationId || undefined,
@@ -602,6 +674,14 @@ const AIDashboard: React.FC = () => {
         // onComplete callback
         (conversationId) => {
           console.log('[AIDashboard] Stream complete, conversationId:', conversationId);
+          
+          // Update conversation meta and ID
+          if (conversationId) {
+            if (!currentConversationId) {
+              setCurrentConversationId(conversationId);
+            }
+            setCurrentConversationMeta({ provider, model });
+          }
         },
         // onError callback
         (error) => {
@@ -638,10 +718,16 @@ const AIDashboard: React.FC = () => {
 
       // Update or create conversation
       if (!currentConversationId && finalConversationId) {
+        console.log('[AIDashboard] Setting conversation ID after stream:', finalConversationId);
         setCurrentConversationId(finalConversationId);
-        loadConversationHistory();
-      } else {
-        loadConversationHistory();
+      }
+      setCurrentConversationMeta({ provider, model });
+      
+      // Reload conversation history in background
+      try {
+        await loadConversationHistory();
+      } catch (error) {
+        console.warn('[AIDashboard] Failed to reload conversation history:', error);
       }
     } catch (error) {
       console.error('[AIDashboard] Error sending message:', error);
@@ -658,6 +744,7 @@ const AIDashboard: React.FC = () => {
       setIsGenerating(false);
       stopSignalRef.current = false;
       streamAbortControllerRef.current = null;
+      setAttachments([]);
     }
   };
 
@@ -669,6 +756,33 @@ const AIDashboard: React.FC = () => {
     }
     setIsGenerating(false);
   };
+
+  const readImageAsDataUrl = (file: File, maxSize = 1024, quality = 0.85): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Failed to get canvas context'));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const mimeType = ['image/jpeg', 'image/webp'].includes(file.type) ? file.type : 'image/png';
+          const dataUrl = canvas.toDataURL(mimeType, quality);
+          resolve(dataUrl);
+        };
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = reader.result as string;
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -725,46 +839,6 @@ const AIDashboard: React.FC = () => {
         alert('Failed to delete conversation. Please try again.');
       }
     }
-  };
-
-  const buildModelsList = (providersData: any) => {
-    // Model descriptions are only used when loading from providers API
-    // All models are now loaded from database - no hardcoded defaults
-    const modelDescriptions: Record<string, any> = {
-      'gemini-2.0-flash-exp': { name: 'Gemini 2.0 Flash', desc: 'Latest Gemini model with improved reasoning', speed: 'Ultra Fast', cost: '$', context: '1M' },
-      'gemini-1.5-pro': { name: 'Gemini 1.5 Pro', desc: 'Best for complex reasoning & coding', speed: 'Fast', cost: '$', context: '2M' },
-      'gemini-1.5-flash': { name: 'Gemini 1.5 Flash', desc: 'Lightning fast for daily tasks', speed: 'Ultra Fast', cost: '$', context: '1M' },
-      'claude-sonnet-4-20250514': { name: 'Claude Sonnet 4', desc: 'Latest Claude model with enhanced capabilities', speed: 'Fast', cost: '$', context: '200K' },
-      'claude-3-5-sonnet-20241022': { name: 'Claude 3.5 Sonnet', desc: 'Excellent at creative writing', speed: 'Moderate', cost: '$', context: '200K' },
-      'claude-3-haiku-20240307': { name: 'Claude 3 Haiku', desc: 'Fast and efficient for simple tasks', speed: 'Ultra Fast', cost: '$', context: '200K' },
-      'gpt-4o': { name: 'GPT-4o', desc: 'Versatile problem solver', speed: 'Fast', cost: '$', context: '128K' },
-      'gpt-4o-mini': { name: 'GPT-4o Mini', desc: 'Efficient and cost-effective', speed: 'Ultra Fast', cost: '$', context: '128K' },
-      'gpt-3.5-turbo': { name: 'GPT-3.5 Turbo', desc: 'Fast and reliable', speed: 'Ultra Fast', cost: '$', context: '16K' },
-      'llama3.2': { name: 'Llama 3.2', desc: 'Open-source model via Ollama', speed: 'Moderate', cost: 'Free', context: '8K' },
-      'mistral': { name: 'Mistral', desc: 'Efficient open-source model', speed: 'Fast', cost: 'Free', context: '32K' },
-      'codellama': { name: 'Code Llama', desc: 'Specialized for code generation', speed: 'Moderate', cost: 'Free', context: '16K' },
-      'phi3': { name: 'Phi 3', desc: 'Lightweight and efficient', speed: 'Ultra Fast', cost: 'Free', context: '4K' },
-      'local-model': { name: 'Local Model', desc: 'Custom model via LM Studio', speed: 'Variable', cost: 'Free', context: 'Variable' },
-    };
-
-    const modelsList: any[] = [];
-    
-    if (providersData.providers) {
-      providersData.providers.forEach((provider: any) => {
-        // Add default model for each provider
-        const defaultModel = provider.defaultModel;
-        if (defaultModel && modelDescriptions[defaultModel]) {
-          modelsList.push({
-            id: defaultModel,
-            provider: provider.name,
-            ...modelDescriptions[defaultModel]
-          });
-        }
-      });
-    }
-
-    // Return empty array if no models from providers - models will be loaded from database
-    return modelsList;
   };
 
   const renderContent = () => {
@@ -1076,10 +1150,10 @@ const AIDashboard: React.FC = () => {
                 <div className="flex items-center justify-between mb-3 px-2">
                   <div className="flex items-center gap-2 text-xs text-gray-400">
                     <span className="material-symbols-outlined text-sm">smart_toy</span>
-                    <span>Gemini 2.0 Flash</span>
+                    <span>{currentModelLabel}</span>
                     <span>•</span>
                     <span className="material-symbols-outlined text-sm">auto_awesome</span>
-                    <span>{currentAssistant.name}</span>
+                    <span>{currentAssistantLabel}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button

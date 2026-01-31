@@ -3,24 +3,42 @@ import React, { useState, useEffect } from 'react';
 import { SettingsTab } from '../types';
 import { useThemeStore, ThemeColor } from '../store/themeStore';
 import { useLanguageStore } from '../store/languageStore';
+import { useAuthStore } from '../store/authStore';
 import { api } from '../services/api';
 import { indexedDB } from '../services/indexedDB';
 
 interface SettingsProps {
   initialTab?: SettingsTab;
-  user?: { id: string; username: string; email: string } | null;
+  user?: { id: string; name?: string; email: string; image?: string } | null;
 }
 
 const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const { primaryColor, setPrimaryColor } = useThemeStore();
   const { language, setLanguage, t } = useLanguageStore();
+  const { setUser, setIsAuthenticated } = useAuthStore();
 
   const [tags, setTags] = useState<any[]>([]);
   const [newTagName, setNewTagName] = useState('');
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string>('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'OWNER' | 'ADMIN' | 'EDITOR' | 'VIEWER'>('EDITOR');
+  const [memberActionId, setMemberActionId] = useState<string | null>(null);
+  const [memberLoading, setMemberLoading] = useState(false);
+  const [profileForm, setProfileForm] = useState({ name: '', email: '' });
+
+  const profileName = profileForm.name || user?.name?.trim() || '';
+  const profileEmail = profileForm.email || user?.email || '';
+  const profileImage = user?.image || (user?.id ? `https://picsum.photos/seed/${user.id}/200/200` : '');
+
+  useEffect(() => {
+    setProfileForm({
+      name: user?.name?.trim() || '',
+      email: user?.email || ''
+    });
+  }, [user]);
   
   // Workspace management state
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
@@ -183,6 +201,42 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
     setShowWorkspaceForm(true);
   };
 
+  const handleUpdateProfile = async () => {
+    try {
+      const response = await api.updateProfile({ name: profileForm.name }) as any;
+      if (response?.success) {
+        // Update global auth store
+        setUser(response.data);
+        alert(language === 'zh' ? '个人资料更新成功' : 'Profile updated successfully');
+      }
+    } catch (error) {
+      console.error('Failed to update profile:', error);
+      alert(language === 'zh' ? '个人资料更新失败' : 'Failed to update profile');
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    const confirmMsg = language === 'zh' 
+      ? '您确定要删除您的账户吗？此操作是永久性的，且无法撤销。' 
+      : 'Are you sure you want to delete your account? This action is permanent and cannot be undone.';
+      
+    if (!confirm(confirmMsg)) return;
+    
+    try {
+      const response = await api.deleteAccount() as any;
+      if (response?.success) {
+        alert(language === 'zh' ? '您的账户已删除' : 'Your account has been deleted');
+        setIsAuthenticated(false);
+        setUser(null);
+        // Tokens are usually cleared by logout/api class on 401, but we should clear if successful
+        window.location.reload(); // Force reload to trigger login screen
+      }
+    } catch (error) {
+      console.error('Failed to delete account:', error);
+      alert(language === 'zh' ? '账户删除失败' : 'Failed to delete account');
+    }
+  };
+
   // Load workspace members when current workspace changes
   useEffect(() => {
     if (currentWorkspaceId) {
@@ -198,6 +252,62 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
       }
     } catch (error) {
       console.error('Failed to load workspace members:', error);
+    }
+  };
+
+  const handleInviteMember = async () => {
+    if (!inviteEmail.trim() || !currentWorkspaceId) return;
+    setMemberLoading(true);
+    try {
+      const response = await api.addWorkspaceMember(currentWorkspaceId, inviteEmail.trim(), inviteRole) as any;
+      if (response?.success) {
+        setInviteEmail('');
+        setInviteRole('EDITOR');
+        await loadWorkspaceMembers(currentWorkspaceId);
+      } else {
+        throw new Error(response?.message || 'Failed to invite member');
+      }
+    } catch (error: any) {
+      console.error('Failed to invite member:', error);
+      alert(error?.message || 'Failed to invite member');
+    } finally {
+      setMemberLoading(false);
+    }
+  };
+
+  const handleUpdateMemberRole = async (memberId: string, role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'VIEWER') => {
+    if (!currentWorkspaceId) return;
+    setMemberActionId(memberId);
+    try {
+      const response = await api.updateWorkspaceMemberRole(currentWorkspaceId, memberId, role) as any;
+      if (response?.success) {
+        setTeamMembers(prev => prev.map(m => m.id === memberId ? { ...m, role: response.data.role } : m));
+      } else {
+        throw new Error(response?.message || 'Failed to update role');
+      }
+    } catch (error: any) {
+      console.error('Failed to update member role:', error);
+      alert(error?.message || 'Failed to update member role');
+    } finally {
+      setMemberActionId(null);
+    }
+  };
+
+  const handleRemoveMember = async (memberId: string) => {
+    if (!currentWorkspaceId) return;
+    setMemberActionId(memberId);
+    try {
+      const response = await api.removeWorkspaceMember(currentWorkspaceId, memberId) as any;
+      if (response?.success) {
+        setTeamMembers(prev => prev.filter(m => m.id !== memberId));
+      } else {
+        throw new Error(response?.message || 'Failed to remove member');
+      }
+    } catch (error: any) {
+      console.error('Failed to remove member:', error);
+      alert(error?.message || 'Failed to remove member');
+    } finally {
+      setMemberActionId(null);
     }
   };
 
@@ -354,46 +464,68 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
             </div>
 
             {/* Team Management Section */}
-            <div className="border-t border-gray-100 dark:border-gray-800 pt-8">
+            <div className="border-t border-gray-100 dark:border-gray-800 pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold">Team Members</h2>
-                  <p className="text-sm text-gray-500 mt-1">Manage access and roles for your workspace members</p>
+                  <h2 className="text-xl font-bold">Team Members</h2>
+                  <p className="text-xs text-gray-500 mt-1">精简管理当前工作区的成员与角色</p>
                 </div>
                 <div className="flex items-center gap-3">
                   {workspaces.length > 1 && (
                     <select
                       value={currentWorkspaceId}
                       onChange={(e) => setCurrentWorkspaceId(e.target.value)}
-                      className="bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2 px-4 text-sm focus:ring-1 focus:ring-primary transition-all"
+                      className="bg-gray-50 dark:bg-gray-800 border-none rounded-lg py-2 px-3 text-sm focus:ring-1 focus:ring-primary transition-all"
                     >
                       {workspaces.map((ws) => (
                         <option key={ws.id} value={ws.id}>{ws.name}</option>
                       ))}
                     </select>
                   )}
-                  <button className="bg-primary text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 flex items-center gap-2">
-                    <span className="material-symbols-outlined text-lg">person_add</span> Invite Member
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder="成员邮箱"
+                      className="bg-gray-50 dark:bg-gray-800 border-none rounded-lg py-2 px-3 text-sm focus:ring-1 focus:ring-primary transition-all w-48"
+                    />
+                    <select
+                      value={inviteRole}
+                      onChange={(e) => setInviteRole(e.target.value as any)}
+                      className="bg-gray-50 dark:bg-gray-800 border-none rounded-lg py-2 px-3 text-sm focus:ring-1 focus:ring-primary transition-all"
+                    >
+                      <option value="EDITOR">Editor</option>
+                      <option value="VIEWER">Viewer</option>
+                      <option value="ADMIN">Admin</option>
+                    </select>
+                    <button
+                      onClick={handleInviteMember}
+                      disabled={memberLoading}
+                      className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 flex items-center gap-2 disabled:opacity-60"
+                    >
+                      <span className="material-symbols-outlined text-lg">person_add</span> 邀请
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white dark:bg-[#15232a] border border-gray-100 dark:border-gray-800 rounded-2xl overflow-hidden shadow-sm">
+            <div className="bg-white dark:bg-[#15232a] border border-gray-100 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm">
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-gray-50/50 dark:bg-gray-900/30 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                    <th className="px-6 py-4">User</th>
-                    <th className="px-6 py-4">Role</th>
-                    <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
+                    <th className="px-4 py-3">User</th>
+                    <th className="px-4 py-3">Role</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                   {teamMembers.length > 0 ? (
                     teamMembers.map((member) => (
-                      <tr key={member.id} className="hover:bg-gray-50/30 dark:hover:bg-gray-800/20 transition-colors">
-                        <td className="px-6 py-4">
+                      <tr key={member.id} className="hover:bg-gray-50/40 dark:hover:bg-gray-800/20 transition-colors">
+                        <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <img
                               src={member.user.image || `https://picsum.photos/seed/${member.user.id}/100/100`}
@@ -406,29 +538,31 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${
-                            member.role === 'OWNER' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-500' :
-                            member.role === 'ADMIN' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-500' :
-                            member.role === 'EDITOR' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-500' :
-                            'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
-                          }`}>
-                            {member.role === 'OWNER' ? 'Owner' :
-                             member.role === 'ADMIN' ? 'Admin' :
-                             member.role === 'EDITOR' ? 'Editor' : 'Viewer'}
-                          </span>
+                        <td className="px-4 py-3">
+                          <select
+                            value={member.role}
+                            onChange={(e) => handleUpdateMemberRole(member.id, e.target.value as any)}
+                            disabled={memberActionId === member.id || member.role === 'OWNER'}
+                            className="bg-gray-50 dark:bg-gray-800 border-none rounded-lg py-1 px-2 text-xs font-medium focus:ring-1 focus:ring-primary"
+                          >
+                            <option value="OWNER">Owner</option>
+                            <option value="ADMIN">Admin</option>
+                            <option value="EDITOR">Editor</option>
+                            <option value="VIEWER">Viewer</option>
+                          </select>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
                             <span className="size-1.5 rounded-full bg-emerald-500"></span>
                             <span className="text-xs">Active</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-right">
-                          <button className="p-1.5 text-gray-400 hover:text-primary transition-colors">
-                            <span className="material-symbols-outlined text-lg">edit</span>
-                          </button>
-                          <button className="p-1.5 text-gray-400 hover:text-red-500 transition-colors">
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => handleRemoveMember(member.id)}
+                            disabled={member.role === 'OWNER' || memberActionId === member.id}
+                            className="p-1.5 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40"
+                          >
                             <span className="material-symbols-outlined text-lg">delete</span>
                           </button>
                         </td>
@@ -450,14 +584,20 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
         return (
           <div className="space-y-10 animate-in fade-in duration-300">
             <div>
-              <h2 className="text-2xl font-bold">User Profile</h2>
-              <p className="text-sm text-gray-500 mt-1">Manage your personal information and account security</p>
+              <h2 className="text-2xl font-bold">{t.settings.profile.title}</h2>
+              <p className="text-sm text-gray-500 mt-1">{t.settings.profile.subtitle}</p>
             </div>
 
             {/* Personal Info Section */}
             <div className="flex flex-col md:flex-row gap-8 items-start">
               <div className="relative group shrink-0 mx-auto md:mx-0">
-                <img src={`https://picsum.photos/seed/${user?.username || 'user'}/200/200`} className="size-32 rounded-3xl object-cover border-4 border-white dark:border-gray-800 shadow-xl" alt="Profile" />
+                {profileImage ? (
+                  <img src={profileImage} className="size-32 rounded-3xl object-cover border-4 border-white dark:border-gray-800 shadow-xl" alt="Profile" />
+                ) : (
+                  <div className="size-32 rounded-3xl border-4 border-white dark:border-gray-800 shadow-xl bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center">
+                    <span className="text-2xl font-bold text-primary">{(profileName || profileEmail || 'U').charAt(0).toUpperCase()}</span>
+                  </div>
+                )}
                 <button className="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center backdrop-blur-sm">
                   <span className="material-symbols-outlined">photo_camera</span>
                 </button>
@@ -466,17 +606,27 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
               <div className="flex-1 w-full space-y-5">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Full Name</label>
-                    <input type="text" defaultValue={user?.username || ''} className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.settings.profile.fullNameLabel}</label>
+                    <input
+                      type="text"
+                      value={profileForm.name}
+                      onChange={(e) => setProfileForm(prev => ({ ...prev, name: e.target.value }))}
+                      className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all"
+                    />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Email Address</label>
-                    <input type="email" defaultValue={user?.email || ''} className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.settings.profile.emailLabel}</label>
+                    <input
+                      type="email"
+                      value={profileForm.email}
+                      onChange={(e) => setProfileForm(prev => ({ ...prev, email: e.target.value }))}
+                      className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all"
+                    />
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Biography</label>
-                  <textarea rows={3} defaultValue="Senior Product Designer and tech enthusiast." className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary resize-none transition-all" />
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.settings.profile.bioLabel}</label>
+                  <textarea rows={3} placeholder={t.settings.profile.bioPlaceholder} className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary resize-none transition-all" />
                 </div>
               </div>
             </div>
@@ -485,29 +635,29 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
 
             {/* Security Section (Merged) */}
             <div className="space-y-6">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Password & Security</h3>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t.settings.profile.securityTitle}</h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-1.5">
-                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Current Password</label>
+                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.settings.profile.currentPassword}</label>
                    <input type="password" placeholder="••••••••" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
                 </div>
                 <div className="hidden md:block"></div> {/* Spacer */}
 
                 <div className="space-y-1.5">
-                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">New Password</label>
-                   <input type="password" placeholder="Enter new password" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
+                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.settings.profile.newPassword}</label>
+                   <input type="password" placeholder={t.settings.profile.newPassword} className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
                 </div>
                 <div className="space-y-1.5">
-                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Confirm New Password</label>
-                   <input type="password" placeholder="Confirm new password" className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
+                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t.settings.profile.confirmPassword}</label>
+                   <input type="password" placeholder={t.settings.profile.confirmPassword} className="w-full bg-gray-50 dark:bg-gray-800 border-none rounded-xl py-2.5 px-4 text-sm focus:ring-1 focus:ring-primary transition-all" />
                 </div>
               </div>
 
               <div className="p-5 bg-gray-50 dark:bg-gray-800/50 rounded-2xl flex items-center justify-between border border-gray-100 dark:border-gray-800 mt-6">
                 <div>
-                  <h4 className="font-bold text-sm">Two-Factor Authentication</h4>
-                  <p className="text-xs text-gray-500 mt-0.5">Secure your account with 2FA via SMS or Authenticator App.</p>
+                  <h4 className="font-bold text-sm">{t.settings.profile.twoFactorTitle}</h4>
+                  <p className="text-xs text-gray-500 mt-0.5">{t.settings.profile.twoFactorDesc}</p>
                 </div>
                 <button className="relative w-12 h-6 rounded-full bg-gray-300 dark:bg-gray-700 transition-colors focus:outline-none">
                   <div className="absolute left-1 top-1 size-4 bg-white rounded-full shadow-sm transition-transform"></div>
@@ -515,9 +665,27 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
               </div>
 
               <div className="flex justify-start pt-2">
-                 <button className="text-xs font-bold text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 px-4 py-2 rounded-lg transition-colors flex items-center gap-2">
-                    <span className="material-symbols-outlined text-sm">logout</span> Log out of all devices
+                  <button className="text-xs font-bold text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 px-4 py-2 rounded-lg transition-colors flex items-center gap-2">
+                    <span className="material-symbols-outlined text-sm">logout</span> {t.settings.profile.logoutAll}
                  </button>
+              </div>
+
+              <div className="border-t border-red-100 dark:border-red-900/30 mt-12 pt-8">
+                 <h3 className="text-lg font-bold text-red-600 dark:text-red-400">{t.settings.profile.dangerZone}</h3>
+                 <p className="text-xs text-gray-500 mt-1">{t.settings.profile.dangerDesc}</p>
+                 
+                 <div className="mt-4 p-5 bg-red-50/50 dark:bg-red-900/5 rounded-2xl border border-red-100 dark:border-red-900/20 flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-sm text-gray-900 dark:text-gray-100">{t.settings.profile.deleteAccount}</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">{t.settings.profile.deleteAccountDesc}</p>
+                    </div>
+                    <button 
+                      onClick={handleDeleteAccount}
+                      className="px-4 py-2 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20"
+                    >
+                      {t.settings.profile.deleteAccount}
+                    </button>
+                 </div>
               </div>
             </div>
           </div>
@@ -643,7 +811,13 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
 
           <div className="flex justify-end gap-3 pt-12 mt-12 border-t border-gray-100 dark:border-gray-800">
             <button className="px-6 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">{t.settings.discard}</button>
-            <button className="px-6 py-2 text-sm font-medium rounded-lg transition-all shadow-lg shadow-primary/20 bg-primary text-white hover:bg-primary/90">
+            <button 
+              onClick={() => {
+                if (activeTab === 'Profile') handleUpdateProfile();
+                else alert(language === 'zh' ? '设置已保存' : 'Settings saved');
+              }}
+              className="px-6 py-2 text-sm font-medium rounded-lg transition-all shadow-lg shadow-primary/20 bg-primary text-white hover:bg-primary/90"
+            >
               {t.settings.save}
             </button>
           </div>

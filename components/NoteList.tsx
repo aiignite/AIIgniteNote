@@ -137,7 +137,13 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
           initialValue: '',
           confirmLabel: t.noteList.tagBtn,
           onConfirm: (val) => {
-             if (val.trim()) onUpdateNote({ ...note, tags: [...note.tags, val.trim()] });
+             if (val.trim()) {
+               const newTagName = val.trim();
+               const isAlreadyAdded = note.tags.some((t: any) => (typeof t === 'string' ? t : t.name) === newTagName);
+               if (!isAlreadyAdded) {
+                 onUpdateNote({ ...note, tags: [...note.tags, newTagName] });
+               }
+             }
           }
         });
         break;

@@ -120,7 +120,7 @@ const TemplateGallery: React.FC = () => {
     <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#0c1419]">
       <header className="h-14 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between px-8 shrink-0">
         <div className="flex items-center gap-6">
-          <h1 className="text-lg font-bold">Template Gallery</h1>
+          <h1 className="text-lg font-bold">Note Templates</h1>
           <nav className="flex gap-4">
             {['All', 'Personal', 'Work'].map((tab) => (
               <button
@@ -200,9 +200,14 @@ const TemplateGallery: React.FC = () => {
                   </div>
                   <div className="p-4">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold text-primary uppercase tracking-widest">
-                        {tmpl.category}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-primary uppercase tracking-widest px-1.5 py-0.5 bg-primary/10 rounded">
+                          {tmpl.category}
+                        </span>
+                        <span className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">
+                          {tmpl.noteType}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-1">
                         <button
                           onClick={(e) => {
@@ -210,7 +215,7 @@ const TemplateGallery: React.FC = () => {
                             setSelectedTemplate(tmpl);
                             setShowCreateForm(true);
                           }}
-                          className="material-symbols-outlined text-gray-300 hover:text-blue-400 cursor-pointer text-lg"
+                          className="material-symbols-outlined text-gray-300 hover:text-blue-400 cursor-pointer text-lg p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                           title="Edit template"
                         >
                           edit
@@ -220,19 +225,28 @@ const TemplateGallery: React.FC = () => {
                             e.stopPropagation();
                             handleDeleteTemplate(tmpl.id);
                           }}
-                          className="material-symbols-outlined text-gray-300 hover:text-red-400 cursor-pointer text-lg"
+                          className="material-symbols-outlined text-gray-300 hover:text-red-400 cursor-pointer text-lg p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                           title="Delete template"
                         >
                           delete
                         </button>
                       </div>
                     </div>
-                    <h3 className="font-bold text-sm mb-1 cursor-pointer group-hover:text-primary transition-colors" onClick={() => handleApplyTemplate(tmpl)}>
+                    <h3 className="font-bold text-sm mb-1 group-hover:text-primary transition-colors">
                       {tmpl.name}
                     </h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
-                      {tmpl.description || `Start with a pre-configured ${tmpl.name} for your next project.`}
+                    <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 h-8">
+                      {tmpl.description || `Start with a pre-configured ${tmpl.name.toLowerCase()} layout.`}
                     </p>
+                    
+                    <button
+                      onClick={() => handleApplyTemplate(tmpl)}
+                      className="w-full mt-4 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-gray-50 dark:bg-gray-800/50 hover:bg-primary hover:text-white dark:hover:bg-primary text-gray-600 dark:text-gray-300 transition-all text-xs font-semibold border border-gray-100 dark:border-gray-700/50 group/btn"
+                    >
+                      <span className="material-symbols-outlined text-sm group-hover/btn:scale-110 transition-transform">add_circle</span>
+                      Create Note
+                    </button>
+
                     <div className="flex items-center gap-2 mt-3 text-[10px] text-gray-400">
                       <span className="material-symbols-outlined text-xs">trending_up</span>
                       <span>{tmpl.usageCount} uses</span>

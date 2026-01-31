@@ -26,7 +26,7 @@ const TemplateForm: React.FC<TemplateFormProps> = ({ template, onSave, onCancel 
     description: template?.description || '',
     prompt: template?.prompt || '',
     category: template?.category || 'General',
-    icon: template?.icon || 'auto_awesome',
+    icon: template?.icon || 'article',
     noteType: template?.noteType || 'MARKDOWN',
     isPublic: template?.isPublic || false,
   });
@@ -42,7 +42,7 @@ const TemplateForm: React.FC<TemplateFormProps> = ({ template, onSave, onCancel 
     }
 
     if (!formData.prompt.trim()) {
-      newErrors.prompt = 'Prompt is required';
+      newErrors.prompt = 'Content is required';
     }
 
     setErrors(newErrors);
@@ -120,19 +120,28 @@ const TemplateForm: React.FC<TemplateFormProps> = ({ template, onSave, onCancel 
               />
             </div>
 
-            {/* AI Prompt */}
+            {/* Template Content */}
             <div>
               <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                AI Prompt <span className="text-red-500">*</span>
+                Template Content <span className="text-red-500">*</span>
               </label>
               <textarea
                 value={formData.prompt}
                 onChange={(e) => setFormData({ ...formData, prompt: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-mono text-sm focus:ring-2 focus:ring-primary focus:border-transparent resize-none"
-                rows={6}
-                placeholder="Enter the AI prompt template that will be used to generate content..."
+                rows={10}
+                placeholder={
+                  formData.noteType === 'MARKDOWN' 
+                    ? "# Title\n\nContent goes here..." 
+                    : formData.noteType === 'RICHTEXT'
+                    ? "Enter your rich text template content..."
+                    : "Enter structured data for visualization..."
+                }
               />
               {errors.prompt && <p className="text-red-500 text-sm mt-1">{errors.prompt}</p>}
+              <p className="mt-2 text-xs text-gray-400">
+                This content will be used as the initial body of the new note.
+              </p>
             </div>
 
             {/* Category and Note Type */}
