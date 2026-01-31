@@ -120,61 +120,80 @@ export class GeminiProvider extends BaseAIProvider {
 
         buffer += decoder.decode(value, { stream: true });
 
-        // Gemini sends data as a continuous stream, not line-separated JSON
-        // We need to parse JSON objects as they become complete
-        while (true) {
-          // Try to find and parse a complete JSON object
-          let parsed = false;
-
-          // Skip data: prefix if present
-          let searchStart = 0;
-          if (buffer.startsWith('data:')) {
-            searchStart = 5; // Skip 'data:'
+        // Gemini sends data as a continuous stream contained within [ ]
+        // We need to handle:
+        // 1. Initial [ and commas between objects
+        // 2. Objects being split across chunks
+        // 3. Multiple objects in one chunk
+        
+        let changed = true;
+        while (changed) {
+          changed = false;
+          
+          // Remove leading [ if present at the very beginning of the stream
+          buffer = buffer.trim();
+          if (buffer.startsWith('[')) {
+            buffer = buffer.substring(1).trim();
+            changed = true;
+          }
+          
+          // Remove leading , between objects
+          if (buffer.startsWith(',')) {
+            buffer = buffer.substring(1).trim();
+            changed = true;
           }
 
-          // Find matching braces for a complete JSON object
+          // Try to find and parse a complete JSON object
           let braceCount = 0;
           let jsonStart = -1;
           let jsonEnd = -1;
+          let inString = false;
+          let escaped = false;
 
-          for (let i = searchStart; i < buffer.length; i++) {
-            if (buffer[i] === '{') {
-              if (braceCount === 0) jsonStart = i;
-              braceCount++;
-            } else if (buffer[i] === '}') {
-              braceCount--;
-              if (braceCount === 0 && jsonStart >= 0) {
-                jsonEnd = i + 1;
-                break;
+          for (let i = 0; i < buffer.length; i++) {
+            const char = buffer[i];
+            
+            if (char === '"' && !escaped) {
+              inString = !inString;
+            }
+            
+            if (char === '\\' && !escaped) {
+              escaped = true;
+            } else {
+              escaped = false;
+            }
+
+            if (!inString) {
+              if (char === '{') {
+                if (braceCount === 0) jsonStart = i;
+                braceCount++;
+              } else if (char === '}') {
+                braceCount--;
+                if (braceCount === 0 && jsonStart >= 0) {
+                  jsonEnd = i + 1;
+                  break;
+                }
               }
             }
           }
 
           if (jsonStart >= 0 && jsonEnd > jsonStart) {
-            // Extract the JSON string
             const jsonStr = buffer.substring(jsonStart, jsonEnd);
-            buffer = buffer.substring(jsonEnd);
+            buffer = buffer.substring(jsonEnd).trim();
+            changed = true;
 
             try {
               const data = JSON.parse(jsonStr);
-
-              // Extract text from Gemini's streaming response format
+              // Gemini streaming response: { "candidates": [ { "content": { "parts": [ { "text": "..." } ] } } ] }
               const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
               if (text) {
-                console.log('[GeminiProvider] Yielding chunk:', text.substring(0, 20) + '...');
                 yield text;
               }
-              parsed = true;
             } catch (e) {
-              console.debug('[GeminiProvider] Failed to parse JSON:', jsonStr.substring(0, 100));
+              console.error('[GeminiProvider] Failed to parse JSON chunk:', jsonStr);
             }
-          } else {
-            // No complete JSON object found, wait for more data
-            break;
           }
-
-          if (!parsed) break;
         }
       }
     } finally {

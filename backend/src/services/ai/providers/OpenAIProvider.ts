@@ -42,6 +42,33 @@ export class OpenAIProvider extends BaseAIProvider {
     };
   }
 
+  /**
+   * Stream chat response using OpenAI's streaming API
+   */
+  async *streamChat(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<string> {
+    const model = options?.model || this.config.model || 'gpt-4o';
+    
+    console.log('[OpenAIProvider] Starting stream with model:', model);
+
+    const stream = await this.client.chat.completions.create({
+      model,
+      messages: messages.map((msg) => ({
+        role: msg.role as 'system' | 'user' | 'assistant',
+        content: msg.content,
+      })),
+      stream: true,
+      max_tokens: options?.maxTokens || 4096,
+      temperature: options?.temperature || 0.7,
+    });
+
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        yield content;
+      }
+    }
+  }
+
   protected formatMessages(messages: ChatMessage[]) {
     return messages.map((msg) => ({
       role: msg.role,

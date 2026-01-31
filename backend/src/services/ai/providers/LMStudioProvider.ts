@@ -53,6 +53,70 @@ export class LMStudioProvider extends BaseAIProvider {
     };
   }
 
+  /**
+   * Stream chat response using LM Studio's streaming API
+   */
+  async *streamChat(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<string> {
+    const model = options?.model || this.config.model || 'local-model';
+    
+    console.log('[LMStudioProvider] Starting stream with model:', model);
+
+    const response = await fetch(`${this.baseURL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: messages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        })),
+        max_tokens: options?.maxTokens || 4096,
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`LM Studio API error: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) throw new Error('No response body');
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
+          
+          if (trimmedLine.startsWith('data: ')) {
+            const jsonStr = trimmedLine.slice(6);
+            try {
+              const data = JSON.parse(jsonStr);
+              const content = data.choices?.[0]?.delta?.content || '';
+              if (content) {
+                yield content;
+              }
+            } catch (e) {
+              console.error('[LMStudioProvider] Failed to parse JSON chunk:', jsonStr);
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
   protected formatMessages(messages: ChatMessage[]) {
     return messages.map((msg) => ({
       role: msg.role,

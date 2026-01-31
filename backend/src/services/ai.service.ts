@@ -54,39 +54,75 @@ export class AIService {
       where: { userId },
     });
 
-    // Determine which provider to use
-    const selectedProvider = provider || userSettings?.aiModelPreference as AIProvider || AIProvider.GEMINI;
+    // Determine which provider and config to use
+    let selectedProvider = provider;
+    let apiKey = this.getProviderApiKey(selectedProvider as AIProvider);
+    let baseURL = this.getProviderBaseURL(selectedProvider as AIProvider);
+    let customModel = null;
 
-    // Get API key and Base URL
-    let apiKey = this.getProviderApiKey(selectedProvider);
-    let baseURL = this.getProviderBaseURL(selectedProvider);
-
-    // Attempt to load custom model configuration if model is specified
+    // 1. If a specific model is requested, try to find it first (across all providers if necessary)
     if (options?.model) {
-      console.log(`[chatStream] Looking up: modelId="${options.model}", provider="${selectedProvider}"`);
-      const customModel = await prisma.aIModel.findFirst({
-        where: {
-          modelId: options.model,
-          provider: selectedProvider,
-          userId
-        }
-      }) || await prisma.aIModel.findFirst({
-        where: {
-          modelId: options.model,
-          provider: selectedProvider,
-          isPublic: true
-        }
+      // Build where clause correctly
+      const whereClause: any = {
+        modelId: options.model,
+        OR: [{ userId }, { isPublic: true }]
+      };
+      if (selectedProvider) {
+        whereClause.provider = selectedProvider;
+      }
+
+      customModel = await prisma.aIModel.findFirst({
+        where: whereClause,
+        orderBy: { isCustom: 'desc' } // Prefer user's custom models
       });
 
+      // If not found with specific provider, search by modelId only
+      if (!customModel && selectedProvider) {
+        customModel = await prisma.aIModel.findFirst({
+          where: {
+            modelId: options.model,
+            OR: [{ userId }, { isPublic: true }]
+          },
+          orderBy: { isCustom: 'desc' }
+        });
+      }
+
       if (customModel) {
-        console.log(`[chatStream] ✓ Found: ${customModel.name}, endpoint=${customModel.endpoint ? 'SET' : 'EMPTY'}`);
+        selectedProvider = customModel.provider as AIProvider;
         if (customModel.apiKey) apiKey = customModel.apiKey;
         if (customModel.endpoint) baseURL = customModel.endpoint;
-      } else {
-        console.log(`[chatStream] ✗ Model not found`);
+        console.log(`[chatStream] Resolved model: ${customModel.name}, provider: ${selectedProvider}`);
       }
     }
-    console.log(`[chatStream] Final: baseURL="${baseURL}", apiKey=${apiKey ? 'SET' : 'EMPTY'}`);
+
+    // 2. Final fallbacks for provider and config
+    if (!selectedProvider) {
+      selectedProvider = (userSettings?.aiModelPreference as AIProvider) || AIProvider.GEMINI;
+      // If we chose a fallback provider, update apikey/baseurl
+      if (!apiKey) apiKey = this.getProviderApiKey(selectedProvider);
+      if (!baseURL) baseURL = this.getProviderBaseURL(selectedProvider);
+    }
+
+    // 3. Fallback to any model's provider if default provider has no config
+    if (!apiKey && !baseURL && !customModel) {
+        const anyConfiguredModel = await prisma.aIModel.findFirst({
+            where: {
+              OR: [
+                { userId },
+                { isPublic: true }
+              ]
+            },
+            orderBy: { isCustom: 'desc' }
+        });
+        if (anyConfiguredModel) {
+            selectedProvider = anyConfiguredModel.provider as AIProvider;
+            apiKey = anyConfiguredModel.apiKey || this.getProviderApiKey(selectedProvider);
+            baseURL = anyConfiguredModel.endpoint || this.getProviderBaseURL(selectedProvider);
+            console.log(`[chatStream] Fallback to configured model: ${anyConfiguredModel.name}, provider: ${selectedProvider}`);
+        }
+    }
+
+    console.log(`[chatStream] Final: provider="${selectedProvider}", baseURL="${baseURL}", apiKey=${apiKey ? 'SET' : 'EMPTY'}`);
 
     // Create provider instance
     let aiProvider = AIProviderFactory.create(selectedProvider, {
@@ -94,6 +130,8 @@ export class AIService {
       baseURL,
       model: options?.model,
     });
+
+    console.log(`[chatStream] AI provider created: ${selectedProvider}. Supports streaming: ${!!aiProvider.streamChat}`);
 
     // Check if provider is available
     const isAvailable = await aiProvider.isAvailable();
@@ -166,15 +204,20 @@ export class AIService {
     if (aiProvider.streamChat) {
       // Use provider's streaming implementation
       const stream = aiProvider.streamChat(enhancedMessages, options);
+      console.log('[chatStream] Starting to iterate over stream...');
 
+      let chunkCount = 0;
       for await (const chunk of stream) {
+        chunkCount++;
         fullResponse += chunk;
+        console.log(`[chatStream] Chunk #${chunkCount}: "${chunk.substring(0, 30)}..." (fullResponse length: ${fullResponse.length})`);
         yield {
           content: chunk,
           done: false,
           conversationId: currentConversationId
         };
       }
+      console.log(`[chatStream] Stream complete. Total chunks: ${chunkCount}, Full response length: ${fullResponse.length}`);
     } else {
       // Fallback to non-streaming with chunked output
       const response = await aiProvider.chat(enhancedMessages, options);
@@ -228,39 +271,75 @@ export class AIService {
       where: { userId },
     });
 
-    // Determine which provider to use
-    const selectedProvider = provider || userSettings?.aiModelPreference as AIProvider || AIProvider.GEMINI;
+    // Determine which provider and config to use
+    let selectedProvider = provider;
+    let apiKey = this.getProviderApiKey(selectedProvider as AIProvider);
+    let baseURL = this.getProviderBaseURL(selectedProvider as AIProvider);
+    let customModel = null;
 
-    // Get API key and Base URL
-    let apiKey = this.getProviderApiKey(selectedProvider);
-    let baseURL = this.getProviderBaseURL(selectedProvider);
-
-    // Attempt to load custom model configuration if model is specified
+    // 1. If a specific model is requested, try to find it first (across all providers if necessary)
     if (options?.model) {
-      console.log(`[chat] Looking up: modelId="${options.model}", provider="${selectedProvider}"`);
-      const customModel = await prisma.aIModel.findFirst({
-        where: {
-          modelId: options.model,
-          provider: selectedProvider,
-          userId
-        }
-      }) || await prisma.aIModel.findFirst({
-        where: {
-          modelId: options.model,
-          provider: selectedProvider,
-          isPublic: true
-        }
+      // Build where clause correctly
+      const whereClause: any = {
+        modelId: options.model,
+        OR: [{ userId }, { isPublic: true }]
+      };
+      if (selectedProvider) {
+        whereClause.provider = selectedProvider;
+      }
+
+      customModel = await prisma.aIModel.findFirst({
+        where: whereClause,
+        orderBy: { isCustom: 'desc' } // Prefer user's custom models
       });
 
+      // If not found with specific provider, search by modelId only
+      if (!customModel && selectedProvider) {
+        customModel = await prisma.aIModel.findFirst({
+          where: {
+            modelId: options.model,
+            OR: [{ userId }, { isPublic: true }]
+          },
+          orderBy: { isCustom: 'desc' }
+        });
+      }
+
       if (customModel) {
-        console.log(`[chat] ✓ Found: ${customModel.name}, endpoint=${customModel.endpoint ? 'SET' : 'EMPTY'}`);
+        selectedProvider = customModel.provider as AIProvider;
         if (customModel.apiKey) apiKey = customModel.apiKey;
         if (customModel.endpoint) baseURL = customModel.endpoint;
-      } else {
-        console.log(`[chat] ✗ Model not found`);
+        console.log(`[chat] Resolved model: ${customModel.name}, provider: ${selectedProvider}`);
       }
     }
-    console.log(`[chat] Final: baseURL="${baseURL}", apiKey=${apiKey ? 'SET' : 'EMPTY'}`);
+
+    // 2. Final fallbacks for provider and config
+    if (!selectedProvider) {
+      selectedProvider = (userSettings?.aiModelPreference as AIProvider) || AIProvider.GEMINI;
+      // If we chose a fallback provider, update apikey/baseurl
+      if (!apiKey) apiKey = this.getProviderApiKey(selectedProvider);
+      if (!baseURL) baseURL = this.getProviderBaseURL(selectedProvider);
+    }
+
+    // 3. Fallback to any model's provider if default provider has no config
+    if (!apiKey && !baseURL && !customModel) {
+        const anyConfiguredModel = await prisma.aIModel.findFirst({
+            where: {
+              OR: [
+                { userId },
+                { isPublic: true }
+              ]
+            },
+            orderBy: { isCustom: 'desc' }
+        });
+        if (anyConfiguredModel) {
+            selectedProvider = anyConfiguredModel.provider as AIProvider;
+            apiKey = anyConfiguredModel.apiKey || this.getProviderApiKey(selectedProvider);
+            baseURL = anyConfiguredModel.endpoint || this.getProviderBaseURL(selectedProvider);
+            console.log(`[chat] Fallback to configured model: ${anyConfiguredModel.name}, provider: ${selectedProvider}`);
+        }
+    }
+
+    console.log(`[chat] Final: provider="${selectedProvider}", baseURL="${baseURL}", apiKey=${apiKey ? 'SET' : 'EMPTY'}`);
 
     // Create provider instance
     let aiProvider = AIProviderFactory.create(selectedProvider, {
@@ -440,8 +519,22 @@ export class AIService {
       where: { userId },
     });
 
-    const defaultProvider: AIProvider = (userSettings?.aiModelPreference as AIProvider | null) ?? AIProvider.GEMINI;
-    const defaultModel = 'gemini-1.5-flash';
+    // Try to find ANY available model to avoid defaulting to Gemini unnecessarily
+    const anyModel = await prisma.aIModel.findFirst({
+      where: {
+        OR: [
+          { userId },
+          { isPublic: true }
+        ]
+      },
+      orderBy: { updatedAt: 'desc' }
+    });
+
+    const defaultProvider: AIProvider = (userSettings?.aiModelPreference as AIProvider | null) 
+      ?? (anyModel?.provider as AIProvider) 
+      ?? AIProvider.GEMINI;
+    
+    let resolvedModel: string | undefined = userSettings?.defaultAIModel || anyModel?.modelId || undefined;
 
     // Create greeting title based on assistant
     const greetingTitle = assistantName ? `Chat with ${assistantName}` : 'New Chat';
@@ -451,7 +544,7 @@ export class AIService {
         userId,
         title: greetingTitle,
         provider: defaultProvider as any,
-        model: defaultModel,
+        ...(resolvedModel ? { model: resolvedModel } : {}),
       },
     });
 
@@ -633,6 +726,25 @@ export class AIService {
         { isCustom: 'asc' },
         { popularity: 'desc' },
       ],
+      select: {
+        id: true,
+        name: true,
+        modelId: true,
+        provider: true,
+        endpoint: true,
+        popularity: true,
+        isPublic: true,
+        isCustom: true,
+        speed: true,
+        cost: true,
+        context: true,
+        description: true,
+        userId: true,
+        workspaceId: true,
+        createdAt: true,
+        updatedAt: true,
+        // Note: apiKey is intentionally excluded for security
+      },
     });
 
     return models;
