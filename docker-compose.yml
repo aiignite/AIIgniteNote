@@ -43,9 +43,9 @@ services:
       PORT: 4000
       # CORS - Configure this to match your frontend URL in different environments
       # Development: http://localhost:3200
-      # Docker: http://localhost:3200 (browsers access frontend via localhost)
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3200}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3200}
+      # Docker: http://localhost:3210 (browsers access frontend via localhost)
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3210}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3210}
 
       # JWT
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-this-in-production}
@@ -68,7 +68,7 @@ services:
 
       # Rate Limiting
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
-      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-1000}
 
       # File Upload
       UPLOAD_DIR: /app/uploads

@@ -108,6 +108,53 @@ export class NotesService {
       },
     });
 
+    // Add tags if provided
+    if (data.tags && data.tags.length > 0) {
+      for (const tagData of data.tags) {
+        const tagName = (tagData as any).name;
+        const tagColor = (tagData as any).color || '#6b7280';
+
+        let tag = await prisma.tag.findFirst({
+          where: {
+            name: tagName,
+            workspaceId: data.workspaceId || null,
+          },
+        });
+
+        if (!tag) {
+          tag = await prisma.tag.create({
+            data: {
+              name: tagName,
+              color: tagColor,
+              workspaceId: data.workspaceId || null,
+            },
+          });
+        }
+
+        await prisma.noteOnTag.create({
+          data: {
+            noteId: note.id,
+            tagId: tag.id,
+          },
+        });
+      }
+
+      // Refresh note object with tags
+      const updatedNote = await prisma.note.findUnique({
+        where: { id: note.id },
+        include: {
+          content: true,
+          folder: true,
+          tags: {
+            include: {
+              tag: true,
+            },
+          },
+        },
+      });
+      if (updatedNote) return updatedNote;
+    }
+
     return note;
   }
 
@@ -298,6 +345,69 @@ export class NotesService {
         },
       },
     });
+
+    // Update tags if provided
+    if (data.tags !== undefined) {
+      // Remove existing relations
+      await prisma.noteOnTag.deleteMany({
+        where: { noteId },
+      });
+
+      // Create new relations (and tags if they don't exist)
+      for (const tagData of data.tags) {
+        const tagName = typeof tagData === 'string' ? tagData : tagData.name;
+        const tagColor = typeof tagData === 'string' ? '#6b7280' : (tagData.color || '#6b7280');
+
+        // Use findFirst/create to handle potentially null workspaceId
+        let tag = await prisma.tag.findFirst({
+          where: {
+            name: tagName,
+            workspaceId: existingNote.workspaceId || null,
+          },
+        });
+
+        if (!tag) {
+          tag = await prisma.tag.create({
+            data: {
+              name: tagName,
+              color: tagColor,
+              workspaceId: existingNote.workspaceId || null,
+            },
+          });
+        } else if (typeof tagData !== 'string' && tagData.color && tag.color !== tagData.color) {
+          // Update color if it changed
+          tag = await prisma.tag.update({
+            where: { id: tag.id },
+            data: { color: tagData.color },
+          });
+        }
+
+        // Add relation
+        await prisma.noteOnTag.create({
+          data: {
+            noteId,
+            tagId: tag.id,
+          },
+        });
+      }
+
+      // Refresh note object with new tags
+      const updatedNoteWithTags = await prisma.note.findUnique({
+        where: { id: noteId },
+        include: {
+          content: true,
+          folder: true,
+          tags: {
+            include: {
+              tag: true,
+            },
+          },
+        },
+      });
+      if (updatedNoteWithTags) {
+        Object.assign(note, updatedNoteWithTags);
+      }
+    }
 
     // Update content if provided
     if (data.content !== undefined) {

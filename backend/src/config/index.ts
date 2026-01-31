@@ -58,7 +58,7 @@ export const config: Config = {
   maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760', 10), // 10MB default
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
-  rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
+  rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000', 10),
   
   // Email Configuration
   emailHost: process.env.EMAIL_HOST || 'smtp.qq.com',

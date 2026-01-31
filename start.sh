@@ -218,9 +218,9 @@ start_docker() {
 
     print_success "Docker Compose 启动成功"
     print_info "服务地址:"
-    print_info "  - 前端: http://localhost:3200"
-    print_info "  - 后端: http://localhost:4000"
-    print_info "  - 健康检查: http://localhost:4000/health"
+    print_info "  - 前端: http://localhost:3210"
+    print_info "  - 后端: http://localhost:3215"
+    print_info "  - 健康检查: http://localhost:3215/health"
     print_info "  - 数据库: localhost:5434"
 
     read -p "是否初始化数据库？(y/n) " -n 1 -r
@@ -239,6 +239,26 @@ stop_docker() {
     print_header "停止 Docker 服务"
     docker-compose down
     print_success "Docker 服务已停止"
+}
+
+rebuild_docker() {
+    print_header "重新构建并部署 Docker 服务"
+
+    check_docker
+    check_docker_compose
+
+    print_info "停止现有 Docker 服务..."
+    docker-compose down
+
+    print_info "清理旧镜像并重新构建..."
+    docker-compose build --no-cache
+
+    print_info "启动服务..."
+    docker-compose up -d
+
+    print_success "Docker 服务重新构建并部署完成"
+    print_info "前端: http://localhost:3200"
+    print_info "后端: http://localhost:4000"
 }
 
 stop_services() {
@@ -275,6 +295,7 @@ AI Ignite Note - 启动脚本
     stop         停止本地服务（前端 + 后端）
     docker       使用 Docker Compose 启动
     docker-stop  停止 Docker 服务
+    docker-rebuild 重新构建并部署 Docker 服务
     install      仅安装依赖
     init-db      仅初始化数据库
     help         显示此帮助信息
@@ -285,6 +306,7 @@ AI Ignite Note - 启动脚本
     ./start.sh backend      # 仅启动后端
     ./start.sh stop         # 停止本地服务
     ./start.sh docker       # 使用 Docker 启动
+    ./start.sh docker-rebuild # 重新构建 Docker 镜像并部署
     ./start.sh install      # 安装依赖
     ./start.sh init-db      # 初始化数据库
 
@@ -339,6 +361,9 @@ main() {
             ;;
         docker-stop)
             stop_docker
+            ;;
+        docker-rebuild)
+            rebuild_docker
             ;;
         install)
             check_nodejs

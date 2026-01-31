@@ -57,6 +57,55 @@ export class AnthropicProvider extends BaseAIProvider {
     };
   }
 
+  /**
+   * Stream chat response using Anthropic's streaming API
+   */
+  async *streamChat(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<string> {
+    const systemMessage = messages.find((m) => m.role === 'system');
+    const chatMessages = messages
+      .filter((m) => m.role !== 'system')
+      .map((msg) => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      }));
+
+    const model = options?.model || this.config.model || 'claude-3-5-sonnet-20241022';
+    
+    console.log('[AnthropicProvider.streamChat] Starting with model:', model);
+    console.log('[AnthropicProvider.streamChat] Messages count:', chatMessages.length);
+    console.log('[AnthropicProvider.streamChat] BaseURL:', this.config.baseURL);
+
+    try {
+      // Try non-streaming first to see if API works at all
+      console.log('[AnthropicProvider.streamChat] Attempting non-streaming call first...');
+      const response = await this.client.messages.create({
+        model: model,
+        max_tokens: options?.maxTokens || 4096,
+        system: systemMessage?.content,
+        messages: chatMessages,
+        stream: false,
+      });
+
+      console.log('[AnthropicProvider.streamChat] Non-streaming call successful');
+      
+      // Yield the full response in chunks to simulate streaming
+      const fullText = response.content[0].type === 'text' ? response.content[0].text : '';
+      console.log('[AnthropicProvider.streamChat] Full response length:', fullText.length);
+      
+      // Split into chunks for streaming effect
+      const chunkSize = 10;
+      for (let i = 0; i < fullText.length; i += chunkSize) {
+        const chunk = fullText.slice(i, i + chunkSize);
+        yield chunk;
+      }
+      
+      console.log('[AnthropicProvider.streamChat] Chunked streaming complete');
+    } catch (error) {
+      console.error('[AnthropicProvider.streamChat] Error:', error);
+      throw error;
+    }
+  }
+
   protected formatMessages(messages: ChatMessage[]) {
     return messages.map((msg) => ({
       role: msg.role,
