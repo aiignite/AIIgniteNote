@@ -70,9 +70,6 @@ export class AnthropicProvider extends BaseAIProvider {
       }));
 
     const model = options?.model || this.config.model || 'claude-3-5-sonnet-20241022';
-    
-    console.log('[AnthropicProvider.streamChat] Starting REAL stream with model:', model);
-    console.log('[AnthropicProvider.streamChat] BaseURL:', this.config.baseURL);
 
     try {
       const stream = await this.client.messages.create({
@@ -82,21 +79,8 @@ export class AnthropicProvider extends BaseAIProvider {
         messages: chatMessages,
         stream: true,
       });
-
-      console.log('[AnthropicProvider.streamChat] Stream created, beginning iteration...');
-
-      let chunkCount = 0;
-      let allEventsForDebug: any[] = [];
       
       for await (const event of stream) {
-        chunkCount++;
-        allEventsForDebug.push(event);
-        
-        // Log first few events in full detail
-        if (chunkCount <= 5) {
-          console.log(`[AnthropicProvider.streamChat] Event #${chunkCount}:`, JSON.stringify(event, null, 2));
-        }
-        
         // Handle different event types for Anthropic/GLM streaming
         if (event.type === 'content_block_delta') {
           const delta = event.delta as any;
@@ -116,12 +100,6 @@ export class AnthropicProvider extends BaseAIProvider {
             yield delta.text;
           }
         }
-      }
-      
-      console.log(`[AnthropicProvider.streamChat] Stream complete. Total events: ${chunkCount}`);
-      if (chunkCount === 0) {
-        console.error('[AnthropicProvider.streamChat] WARNING: No events received from stream!');
-        console.error('[AnthropicProvider.streamChat] Sample events:', JSON.stringify(allEventsForDebug.slice(0, 10), null, 2));
       }
     } catch (error) {
       console.error('[AnthropicProvider.streamChat] Stream error:', error);
