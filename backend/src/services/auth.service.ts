@@ -4,13 +4,24 @@ import { generateTokens } from '../utils/jwt';
 import { ApiErrorClass } from '../utils/response';
 import { LoginCredentials, RegisterData } from '../types';
 import { emailService } from './email.service';
-import crypto from 'crypto';
+
+const VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000;
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function generateVerificationCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 export class AuthService {
   /**
    * Register a new user
    */
   async register(data: RegisterData) {
+    const normalizedEmail = normalizeEmail(data.email);
+
     // Validate password strength
     const passwordValidation = validatePasswordStrength(data.password);
     if (!passwordValidation.valid) {
@@ -23,7 +34,7 @@ export class AuthService {
 
     // Check if email already exists
     const existingUser = await prisma.user.findUnique({
-      where: { email: data.email },
+      where: { email: normalizedEmail },
     });
 
     if (existingUser) {
@@ -37,19 +48,18 @@ export class AuthService {
     // Hash password
     const hashedPassword = await hashPassword(data.password);
 
-    // Generate verification token
-    const verificationToken = crypto.randomBytes(32).toString('hex');
-    const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const verificationToken = generateVerificationCode();
+    const verificationTokenExpires = new Date(Date.now() + VERIFICATION_CODE_TTL_MS);
 
     // Create user
     const user = await prisma.user.create({
       data: {
-        email: data.email,
+        email: normalizedEmail,
         name: data.name,
         password: hashedPassword,
         verificationToken,
         verificationTokenExpires,
-        isActive: true, // Set to true by default for easier onboarding
+        isActive: false,
         settings: {
           create: {},
         },
@@ -63,11 +73,10 @@ export class AuthService {
       },
     });
 
-    // Send verification email
-    await emailService.sendVerificationEmail(user.email!, verificationToken);
+    await emailService.sendVerificationCode(user.email!, verificationToken);
 
     return {
-      message: 'Registration successful. Please check your email to verify your account.',
+      message: '注册成功，验证码已发送至邮箱，请在10分钟内完成验证。',
       user,
     };
   }
@@ -76,6 +85,61 @@ export class AuthService {
    * Verify email address
    */
   async verifyEmail(token: string) {
+    return this.verifyCodeWithToken(token);
+  }
+
+  async verifyCode(email: string, code: string) {
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedCode = code.trim();
+    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+
+    if (!user || !user.verificationToken || !user.verificationTokenExpires) {
+      throw new ApiErrorClass('INVALID_TOKEN', '验证码不存在或已过期', 400);
+    }
+
+    if (user.verificationToken !== normalizedCode || user.verificationTokenExpires < new Date()) {
+      throw new ApiErrorClass('INVALID_TOKEN', '验证码错误或已过期', 400);
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        isActive: true,
+        emailVerified: new Date(),
+        verificationToken: null,
+        verificationTokenExpires: null,
+      },
+    });
+
+    return { message: '邮箱验证成功，现在可以登录。' };
+  }
+
+  async resendVerificationCode(email: string) {
+    const normalizedEmail = normalizeEmail(email);
+    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+
+    if (!user) {
+      throw new ApiErrorClass('USER_NOT_FOUND', '用户不存在', 404);
+    }
+
+    if (user.emailVerified) {
+      throw new ApiErrorClass('ALREADY_VERIFIED', '邮箱已验证，无需重复发送', 400);
+    }
+
+    const verificationToken = generateVerificationCode();
+    const verificationTokenExpires = new Date(Date.now() + VERIFICATION_CODE_TTL_MS);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { verificationToken, verificationTokenExpires },
+    });
+
+    await emailService.sendVerificationCode(user.email!, verificationToken);
+
+    return { message: '验证码已重新发送，请在10分钟内使用。' };
+  }
+
+  private async verifyCodeWithToken(token: string) {
     const user = await prisma.user.findFirst({
       where: {
         verificationToken: token,
@@ -93,7 +157,6 @@ export class AuthService {
       );
     }
 
-    // Activate user
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -113,9 +176,9 @@ export class AuthService {
    * Login user
    */
   async login(credentials: LoginCredentials) {
-    // Find user by email
+    const normalizedEmail = normalizeEmail(credentials.email);
     const user = await prisma.user.findUnique({
-      where: { email: credentials.email },
+      where: { email: normalizedEmail },
     });
 
     if (!user || !user.password) {
@@ -126,7 +189,6 @@ export class AuthService {
       );
     }
 
-    // Verify password
     const isValid = await verifyPassword(credentials.password, user.password);
 
     if (!isValid) {
@@ -137,7 +199,14 @@ export class AuthService {
       );
     }
 
-    // Check if user is active
+    if (!user.emailVerified) {
+      throw new ApiErrorClass(
+        'EMAIL_NOT_VERIFIED',
+        '请先完成邮箱验证',
+        403
+      );
+    }
+
     if (!user.isActive) {
       throw new ApiErrorClass(
         'ACCOUNT_DISABLED',
@@ -175,6 +244,7 @@ export class AuthService {
         name: true,
         email: true,
         image: true,
+        emailVerified: true,
         isActive: true,
       },
     });
@@ -184,6 +254,14 @@ export class AuthService {
         'USER_NOT_FOUND',
         'User not found',
         404
+      );
+    }
+
+    if (!user.emailVerified) {
+      throw new ApiErrorClass(
+        'EMAIL_NOT_VERIFIED',
+        '请先完成邮箱验证',
+        403
       );
     }
 
@@ -264,6 +342,18 @@ export class AuthService {
     });
 
     return user;
+  }
+
+  /**
+   * Delete user account
+   */
+  async deleteAccount(userId: string) {
+    // Delete user (cascade will handle most relations like sessions, notes, etc. based on schema)
+    await prisma.user.delete({
+      where: { id: userId },
+    });
+
+    return { success: true };
   }
 
   /**

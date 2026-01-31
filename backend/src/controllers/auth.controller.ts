@@ -20,6 +20,15 @@ const loginSchema = z.object({
   }),
 });
 
+const verifyCodeSchema = z.object({
+  email: z.string().email('Invalid email format'),
+  code: z.string().regex(/^\d{6}$/, '验证码必须为6位数字'),
+});
+
+const resendCodeSchema = z.object({
+  email: z.string().email('Invalid email format'),
+});
+
 export class AuthController {
   /**
    * POST /api/auth/register
@@ -69,6 +78,66 @@ export class AuthController {
         );
       } else {
         error(res, 'VERIFICATION_FAILED', 'Email verification failed', 400);
+      }
+    }
+  };
+
+  /**
+   * POST /api/auth/verify-code
+   * Verify email with code
+   */
+  verifyCode = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const validation = verifyCodeSchema.safeParse(req.body);
+      if (!validation.success) {
+        error(res, 'VALIDATION_ERROR', validation.error.errors[0].message, 400);
+        return;
+      }
+
+      const { email, code } = validation.data;
+      const result = await authService.verifyCode(email, code);
+      success(res, result);
+    } catch (err) {
+      if (err instanceof Error) {
+        const apiErr = err as any;
+        error(
+          res,
+          apiErr.code || 'VERIFICATION_FAILED',
+          apiErr.message || 'Email verification failed',
+          apiErr.statusCode || 400
+        );
+      } else {
+        error(res, 'VERIFICATION_FAILED', 'Email verification failed', 400);
+      }
+    }
+  };
+
+  /**
+   * POST /api/auth/resend-code
+   * Resend verification code
+   */
+  resendCode = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const validation = resendCodeSchema.safeParse(req.body);
+      if (!validation.success) {
+        error(res, 'VALIDATION_ERROR', validation.error.errors[0].message, 400);
+        return;
+      }
+
+      const { email } = validation.data;
+      const result = await authService.resendVerificationCode(email);
+      success(res, result);
+    } catch (err) {
+      if (err instanceof Error) {
+        const apiErr = err as any;
+        error(
+          res,
+          apiErr.code || 'RESEND_FAILED',
+          apiErr.message || 'Failed to resend code',
+          apiErr.statusCode || 400
+        );
+      } else {
+        error(res, 'RESEND_FAILED', 'Failed to resend code', 400);
       }
     }
   };
@@ -195,6 +264,34 @@ export class AuthController {
         );
       } else {
         error(res, 'PROFILE_UPDATE_FAILED', 'Failed to update profile', 500);
+      }
+    }
+  };
+
+  /**
+   * DELETE /api/users/profile
+   * Delete user account
+   */
+  deleteAccount = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.userId) {
+        error(res, 'UNAUTHORIZED', 'User ID required', 401);
+        return;
+      }
+
+      const result = await authService.deleteAccount(req.userId);
+      success(res, result);
+    } catch (err) {
+      if (err instanceof Error) {
+        const apiErr = err as any;
+        error(
+          res,
+          apiErr.code || 'ACCOUNT_DELETE_FAILED',
+          apiErr.message || 'Failed to delete account',
+          apiErr.statusCode || 500
+        );
+      } else {
+        error(res, 'ACCOUNT_DELETE_FAILED', 'Failed to delete account', 500);
       }
     }
   };

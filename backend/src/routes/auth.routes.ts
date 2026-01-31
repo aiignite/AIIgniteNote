@@ -20,6 +20,20 @@ router.post('/register', validate(registerSchema), authController.register);
 router.get('/verify-email', authController.verifyEmail);
 
 /**
+ * @route   POST /api/auth/verify-code
+ * @desc    Verify user's email address with code
+ * @access  Public
+ */
+router.post('/verify-code', authController.verifyCode);
+
+/**
+ * @route   POST /api/auth/resend-code
+ * @desc    Resend verification code
+ * @access  Public
+ */
+router.post('/resend-code', authController.resendCode);
+
+/**
  * @route   POST /api/auth/login
  * @desc    Login user
  * @access  Public
