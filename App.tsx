@@ -246,7 +246,7 @@ const App: React.FC = () => {
         const localNotes = response.data.map(apiNoteToLocalNote);
         console.log('[loadNotes] Converted notes:', localNotes);
         console.log('[loadNotes] Notes count:', localNotes.length);
-        console.log('[loadNotes] Setting notes state...');
+            folderId: folderId ?? null,
 
         setNotes(localNotes);
 
@@ -524,6 +524,25 @@ const App: React.FC = () => {
     } catch (error) {
       console.error('Error updating folder:', error);
       alert('Failed to update folder');
+    }
+  }, [isAuthenticated, loadFolders]);
+
+  const handleMoveFolder = useCallback(async (id: string, parentId: string | null) => {
+    if (!isAuthenticated) return;
+
+    try {
+      const response = await api.updateFolder(id, { parentId: parentId || undefined }) as { success: boolean; data: any };
+      if (response.success) {
+        try {
+          await indexedDB.cacheFolder(response.data);
+        } catch (cacheError) {
+          console.warn('Failed to cache moved folder to IndexedDB:', cacheError);
+        }
+        await loadFolders();
+      }
+    } catch (error) {
+      console.error('Error moving folder:', error);
+      alert('Failed to move folder');
     }
   }, [isAuthenticated, loadFolders]);
 
@@ -915,6 +934,7 @@ const App: React.FC = () => {
               onAddFolder={handleAddFolder}
               onDeleteFolder={handleDeleteFolder}
               onUpdateFolder={handleUpdateFolder}
+              onMoveFolder={handleMoveFolder}
               onDeleteNote={handleDeleteNote}
               onUpdateNote={handleUpdateNote}
               onToggleFavorite={handleToggleFavorite}

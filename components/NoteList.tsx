@@ -9,10 +9,11 @@ interface NoteListProps {
   folders?: Folder[];
   selectedNoteId: string | null;
   onSelectNote: (id: string) => void;
-  onAddNote: (type: NoteType, folderId?: string) => void;
+  onAddNote: (type: NoteType, folderId?: string | null) => void;
   onAddFolder?: (name: string, parentId?: string) => void;
   onDeleteFolder?: (id: string) => void;
   onUpdateFolder?: (id: string, name: string) => void;
+  onMoveFolder?: (id: string, parentId: string | null) => void;
   onDeleteNote: (id: string) => void;
   onUpdateNote: (note: Note) => void;
   onToggleFavorite?: (id: string) => void;
@@ -44,7 +45,23 @@ interface FolderTreeNode extends Folder {
   level: number;
 }
 
-const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId, onSelectNote, onAddNote, onAddFolder, onDeleteFolder, onUpdateFolder, onDeleteNote, onUpdateNote, onToggleFavorite, width, loading = false, error = null, isTrashView = false, onRestoreNote }) => {
+interface TreeFolderNode extends Folder {
+  type: 'folder';
+  children: TreeNode[];
+  level: number;
+}
+
+interface TreeNoteNode {
+  id: string;
+  type: 'note';
+  note: Note;
+  parentId: string | null;
+  level: number;
+}
+
+type TreeNode = TreeFolderNode | TreeNoteNode;
+
+const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId, onSelectNote, onAddNote, onAddFolder, onDeleteFolder, onUpdateFolder, onMoveFolder, onDeleteNote, onUpdateNote, onToggleFavorite, width, loading = false, error = null, isTrashView = false, onRestoreNote }) => {
   // Default viewMode changed to 'list' as requested
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -67,15 +84,8 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
   const selectedNote = useMemo(() => notes.find(n => n.id === selectedNoteId) || null, [notes, selectedNoteId]);
   const currentFolderName = currentFolderId ? (folderMap.get(currentFolderId)?.name || '') : '';
 
-  const matchNoteToFolder = useCallback((note: Note, folderId: string) => {
-    if (!folderId) return false;
-    if (note.folderId) return note.folderId === folderId;
-    const folder = folderMap.get(folderId);
-    return folder ? note.folder === folder.name : false;
-  }, [folderMap]);
-  
   // Drag and Drop State
-  const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
+  const [draggedItem, setDraggedItem] = useState<{ type: 'note' | 'folder'; id: string } | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
 
   // Modal State
@@ -234,71 +244,58 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
   };
 
   // Logic to process items based on currentFolder
-  const { displayItems } = useMemo(() => {
-    let items: (Note | { id: string; isFolder: true; name: string; date: string; noteCount?: number })[] = [];
+  const folderNameMap = useMemo(() => new Map((folders || []).map(folder => [folder.name, folder.id])), [folders]);
 
-    const isRootNote = (note: Note) => {
-      const folderName = note.folder || '';
-      return (!note.folderId && (!folderName || folderName === 'General'));
+  const { treeNodes, visibleNoteCount } = useMemo(() => {
+    const folderNodes = new Map<string, TreeFolderNode>();
+    const rootNodes: TreeNode[] = [];
+
+    folders.forEach(folder => {
+      folderNodes.set(folder.id, {
+        ...folder,
+        type: 'folder',
+        children: [],
+        level: 0
+      });
+    });
+
+    folderNodes.forEach(node => {
+      if (node.parentId && folderNodes.has(node.parentId)) {
+        folderNodes.get(node.parentId)!.children.push(node);
+      } else {
+        rootNodes.push(node);
+      }
+    });
+
+    const filteredNotes = notes.filter(note => {
+      if (showFavoritesOnly && !note.isFavorite) return false;
+      return true;
+    });
+
+    const resolveNoteFolderId = (note: Note): string | null => {
+      if (note.folderId && folderNodes.has(note.folderId)) return note.folderId;
+      if (note.folder && folderNameMap.has(note.folder)) return folderNameMap.get(note.folder) || null;
+      return null;
     };
 
-    if (currentFolderId === null) {
-      const folderItems = folders.map(folder => ({
-        id: `folder-${folder.id}`,
-        isFolder: true as const,
-        name: folder.name,
-        date: folder.updatedAt,
-        noteCount: folder.noteCount || 0
-      }));
+    filteredNotes.forEach(note => {
+      const targetFolderId = resolveNoteFolderId(note);
+      const noteNode: TreeNoteNode = {
+        id: note.id,
+        type: 'note',
+        note,
+        parentId: targetFolderId,
+        level: 0
+      };
 
-      const legacyFolderNames = Array.from(new Set(
-        notes
-          .filter(n => !n.folderId)
-          .map(n => n.folder)
-          .filter(f => f !== 'General' && f && !folders.some(af => af.name === f))
-      )).sort();
-
-      const legacyFolderItems = legacyFolderNames.map(folderName => {
-        const folderNotes = notes.filter(n => n.folder === folderName);
-        const latestNote = folderNotes.sort((a,b) => b.timestamp - a.timestamp)[0];
-        return {
-          id: `folder-legacy-${folderName}`,
-          isFolder: true as const,
-          name: folderName,
-          date: latestNote ? latestNote.updatedAt : ''
-        };
-      });
-
-      const rootNotes = notes
-        .filter(isRootNote)
-        .sort((a, b) => b.timestamp - a.timestamp);
-
-      items = [...folderItems, ...legacyFolderItems, ...rootNotes];
-    } else {
-      items = notes.filter(n => matchNoteToFolder(n, currentFolderId));
-    }
-
-    if (showFavoritesOnly) {
-      items = items.filter(item => {
-        if ('isFolder' in item && item.isFolder) return false;
-        return (item as Note).isFavorite;
-      });
-    }
-
-    items = items.sort((a, b) => {
-      const isAFolder = 'isFolder' in a && a.isFolder;
-      const isBFolder = 'isFolder' in b && b.isFolder;
-
-      if (isAFolder && !isBFolder) return -1;
-      if (!isAFolder && isBFolder) return 1;
-      
-      if (isAFolder && isBFolder) {
-        return a.name.localeCompare(b.name);
+      if (targetFolderId && folderNodes.has(targetFolderId)) {
+        folderNodes.get(targetFolderId)!.children.push(noteNode);
+      } else {
+        rootNodes.push(noteNode);
       }
+    });
 
-      const noteA = a as Note;
-      const noteB = b as Note;
-      
+    const sortNotes = (noteA: Note, noteB: Note) => {
       let comparison = 0;
       if (sortMode === 'title') {
         comparison = noteA.title.localeCompare(noteB.title);
@@ -307,27 +304,71 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
       } else {
         comparison = noteA.timestamp - noteB.timestamp;
       }
-      
       return sortOrder === 'desc' ? -comparison : comparison;
-    });
+    };
 
-    if (searchQuery.trim()) {
+    const sortChildren = (nodes: TreeNode[]): TreeNode[] => {
+      const folderPart = nodes.filter(n => n.type === 'folder') as TreeFolderNode[];
+      const notePart = nodes.filter(n => n.type === 'note') as TreeNoteNode[];
+
+      folderPart.sort((a, b) => a.name.localeCompare(b.name));
+      notePart.sort((a, b) => sortNotes(a.note, b.note));
+
+      const sortedFolders = folderPart.map(folder => ({
+        ...folder,
+        children: sortChildren(folder.children)
+      }));
+
+      return [...sortedFolders, ...notePart];
+    };
+
+    const sortRoot = sortChildren(rootNodes);
+
+    const filterBySearch = (nodes: TreeNode[]): TreeNode[] => {
+      if (!searchQuery.trim()) return nodes;
       const query = searchQuery.toLowerCase();
-      items = items.filter(item => {
-        if ('isFolder' in item && item.isFolder) {
-          return item.name.toLowerCase().includes(query);
+
+      const filtered: TreeNode[] = [];
+
+      nodes.forEach(node => {
+        if (node.type === 'note') {
+          const matches = node.note.title.toLowerCase().includes(query) ||
+            (node.note.content && node.note.content.toLowerCase().includes(query));
+          if (matches) filtered.push(node);
         } else {
-          const note = item as Note;
-          return (
-            note.title.toLowerCase().includes(query) ||
-            (note.content && note.content.toLowerCase().includes(query))
-          );
+          const childMatches = filterBySearch(node.children);
+          const folderMatches = node.name.toLowerCase().includes(query);
+          if (folderMatches || childMatches.length > 0) {
+            filtered.push({ ...node, children: childMatches });
+          }
         }
       });
-    }
 
-    return { displayItems: items };
-  }, [notes, folders, currentFolderId, sortMode, sortOrder, searchQuery, showFavoritesOnly, matchNoteToFolder]);
+      return filtered;
+    };
+
+    const filteredRoot = filterBySearch(sortRoot);
+
+    const applyLevel = (nodes: TreeNode[], level: number): TreeNode[] => {
+      return nodes.map(node => {
+        if (node.type === 'note') {
+          return { ...node, level } as TreeNoteNode;
+        }
+        return { ...node, level, children: applyLevel(node.children, level + 1) } as TreeFolderNode;
+      });
+    };
+
+    const leveled = applyLevel(filteredRoot, 0);
+
+    const countNotes = (nodes: TreeNode[]): number => {
+      return nodes.reduce((acc, node) => {
+        if (node.type === 'note') return acc + 1;
+        return acc + countNotes(node.children);
+      }, 0);
+    };
+
+    return { treeNodes: leveled, visibleNoteCount: countNotes(leveled) };
+  }, [folders, notes, folderNameMap, showFavoritesOnly, sortMode, sortOrder, searchQuery]);
 
   const noteTypes: { type: NoteType; icon: string; color: string }[] = [
     { type: 'Markdown', icon: 'markdown', color: 'text-blue-500' },
@@ -356,7 +397,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
 
   const handleAddNoteClick = (type: NoteType) => {
     const targetFolderId = resolveTargetFolderId();
-    onAddNote(type, targetFolderId || undefined);
+    onAddNote(type, targetFolderId);
     setShowAddMenu(false);
   };
 
@@ -374,9 +415,6 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
                 if (onAddFolder) {
                     // Call the proper folder creation API
                 onAddFolder(folderName.trim(), currentFolderId || undefined);
-                } else {
-                    // Fallback to old behavior if onAddFolder not provided
-                onAddNote('Markdown', currentFolderId || undefined);
                 }
             }
         }
@@ -398,17 +436,38 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
   };
 
   // Drag and drop handlers
-  const handleDragStart = (e: React.DragEvent, noteId: string) => {
-    setDraggedNoteId(noteId);
+  const isFolderDescendant = useCallback((folderId: string, targetId: string | null) => {
+    if (!targetId) return false;
+    let current: string | null | undefined = targetId;
+    while (current) {
+      if (current === folderId) return true;
+      current = folderMap.get(current)?.parentId || null;
+    }
+    return false;
+  }, [folderMap]);
+
+  const handleDragStart = (e: React.DragEvent, item: { type: 'note' | 'folder'; id: string }) => {
+    setDraggedItem(item);
     e.dataTransfer.effectAllowed = 'move';
   };
 
   const handleDragOver = (e: React.DragEvent, folderId: string | null) => {
-    if (draggedNoteId) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      setDragOverFolderId(folderId);
+    if (!draggedItem) return;
+
+    if (draggedItem.type === 'folder') {
+      if (folderId === draggedItem.id) return;
+      if (isFolderDescendant(draggedItem.id, folderId)) return;
     }
+
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverFolderId(folderId);
+  };
+
+  const handleDragEnter = (e: React.DragEvent, folderId: string | null) => {
+    if (!draggedItem) return;
+    e.preventDefault();
+    setDragOverFolderId(folderId);
   };
 
   const handleDragLeave = () => {
@@ -417,35 +476,144 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
 
   const handleDrop = (e: React.DragEvent, folderId: string | null) => {
     e.preventDefault();
-    if (draggedNoteId) {
-      const note = notes.find(n => n.id === draggedNoteId);
+    if (!draggedItem) return;
+
+    if (draggedItem.type === 'note') {
+      const note = notes.find(n => n.id === draggedItem.id);
       if (note) {
         const folder = folderId ? folders.find(f => f.id === folderId) : null;
         onUpdateNote({
           ...note,
           folder: folder ? folder.name : '',
-          folderId: folderId || undefined
+          folderId: folderId ?? null
         });
       }
+    } else if (draggedItem.type === 'folder' && onMoveFolder) {
+      if (folderId === draggedItem.id) return;
+      if (isFolderDescendant(draggedItem.id, folderId)) return;
+      onMoveFolder(draggedItem.id, folderId || null);
     }
-    setDraggedNoteId(null);
+
+    setDraggedItem(null);
     setDragOverFolderId(null);
   };
 
-  // Render folder recursively with tree structure
-  const renderFolderTree = (folder: FolderTreeNode): React.ReactNode => {
-    const isExpanded = expandedFolders.has(folder.id);
-    const hasChildren = folder.children && folder.children.length > 0;
-    const paddingLeft = folder.level * 16 + 12;
-    const isDragOver = dragOverFolderId === folder.id;
-    
-    return (
-      <div key={folder.id} className="mb-0.5">
-        {/* Folder Header */}
+  const handleDragEnd = () => {
+    setDraggedItem(null);
+    setDragOverFolderId(null);
+  };
+
+  // 渲染树节点（包含文件夹和笔记）
+  const renderTreeNode = (node: TreeNode): React.ReactNode => {
+    if (node.type === 'note') {
+      const note = node.note;
+      const paddingLeft = node.level * 16 + 36;
+
+      return (
         <div
-          onDragOver={(e) => handleDragOver(e, folder.id)}
+          key={note.id}
+          draggable={!isTrashView}
+          onDragStart={(e) => handleDragStart(e, { type: 'note', id: note.id })}
+          onDragEnd={handleDragEnd}
+          onClick={() => onSelectNote(note.id)}
+          className={`group relative transition-all cursor-pointer rounded-lg px-3 py-2.5 flex items-center gap-2.5 ${
+            selectedNoteId === note.id 
+              ? 'bg-primary/5 dark:bg-primary/10' 
+              : 'hover:bg-white dark:hover:bg-gray-800/30'
+          }`}
+          style={{ paddingLeft: `${paddingLeft}px` }}
+        >
+          <div className={`shrink-0 p-1.5 rounded-md ${
+            note.type === 'Markdown' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 
+            note.type === 'Rich Text' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' :
+            note.type === 'Mind Map' ? 'bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400' :
+            'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400'
+          }`}>
+            <span className="material-symbols-outlined text-lg">
+              {note.type === 'Markdown' ? 'markdown' : 
+              note.type === 'Rich Text' ? 'format_size' : 
+              note.type === 'Mind Map' ? 'account_tree' : 'draw'}
+            </span>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <h3 className={`text-sm font-medium truncate ${selectedNoteId === note.id ? 'text-primary' : 'text-gray-700 dark:text-gray-200'}`}>
+              {note.title}
+            </h3>
+            <div className="text-[10px] text-gray-400 truncate">{note.updatedAt}</div>
+          </div>
+
+          {note.tags && note.tags.length > 0 && (
+            <div className="flex items-center gap-1">
+              {note.tags.slice(0, 2).map((tag, idx) => {
+                const tagObj = typeof tag === 'string' ? { name: tag, color: '#6b7280' } : tag;
+                return (
+                  <span 
+                    key={idx}
+                    className="text-[9px] px-1.5 py-0.5 rounded-md"
+                    style={{ backgroundColor: `${tagObj.color}20`, color: tagObj.color }}
+                  >
+                    {tagObj.name}
+                  </span>
+                );
+              })}
+              {note.tags.length > 2 && (
+                <span className="text-[9px] text-gray-400">+{note.tags.length - 2}</span>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center gap-1">
+            {note.isFavorite && (
+              <span className="material-symbols-outlined text-amber-400 text-sm fill-current">star</span>
+            )}
+            <button 
+              onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
+              className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 ${
+                  activeMenuId === note.id ? 'opacity-100' : ''
+              }`}
+            >
+              <span className="material-symbols-outlined text-base">more_horiz</span>
+            </button>
+          </div>
+
+          {activeMenuId === note.id && (
+            <div ref={menuRef} className="absolute right-2 top-8 w-40 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden py-1">
+              <button onClick={(e) => handleMenuAction(e, 'favorite', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                <span className={`material-symbols-outlined text-sm ${note.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`}>star</span> 
+                {note.isFavorite ? 'Remove Favorite' : 'Add Favorite'}
+              </button>
+              <button onClick={(e) => handleMenuAction(e, 'tags', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                <span className="material-symbols-outlined text-sm">label</span> Add Tag
+              </button>
+              <button onClick={(e) => handleMenuAction(e, 'folder', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                <span className="material-symbols-outlined text-sm">folder</span> Move
+              </button>
+              <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
+              <button onClick={(e) => handleMenuAction(e, 'delete', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 flex items-center gap-2">
+                <span className="material-symbols-outlined text-sm">delete</span> Delete
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const isExpanded = searchQuery.trim() ? true : expandedFolders.has(node.id);
+    const hasChildren = node.children && node.children.length > 0;
+    const paddingLeft = node.level * 16 + 12;
+    const isDragOver = dragOverFolderId === node.id;
+
+    return (
+      <div key={node.id} className="mb-0.5">
+        <div
+          draggable={!isTrashView}
+          onDragStart={(e) => handleDragStart(e, { type: 'folder', id: node.id })}
+          onDragEnd={handleDragEnd}
+          onDragEnter={(e) => handleDragEnter(e, node.id)}
+          onDragOver={(e) => handleDragOver(e, node.id)}
           onDragLeave={handleDragLeave}
-          onDrop={(e) => handleDrop(e, folder.id)}
+          onDrop={(e) => handleDrop(e, node.id)}
           className={`group relative transition-all cursor-pointer rounded-lg flex items-center gap-2 px-3 py-2.5 ${
             isDragOver 
               ? 'bg-primary/10 border-2 border-primary border-dashed' 
@@ -453,10 +621,9 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
           }`}
           style={{ paddingLeft: `${paddingLeft}px` }}
         >
-          {/* Expand/Collapse Button */}
           {hasChildren && (
             <button
-              onClick={() => toggleFolder(folder.id)}
+              onClick={() => toggleFolder(node.id)}
               className="shrink-0 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
             >
               <span className="material-symbols-outlined text-sm text-gray-400">
@@ -465,10 +632,9 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
             </button>
           )}
           {!hasChildren && <div className="w-5" />}
-          
-          {/* Folder Icon and Name */}
+
           <div 
-            onClick={() => setCurrentFolderId(folder.id)}
+            onClick={() => setCurrentFolderId(node.id)}
             className="flex-1 flex items-center gap-2 min-w-0"
           >
             <span className="material-symbols-outlined text-xl text-amber-400 shrink-0">
@@ -476,12 +642,11 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
             </span>
             <div className="flex-1 min-w-0">
               <h3 className="font-medium text-sm text-gray-800 dark:text-gray-200 truncate">
-                {folder.name}
+                {node.name}
               </h3>
             </div>
           </div>
-          
-          {/* Folder Actions */}
+
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
               onClick={(e) => {
@@ -495,7 +660,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
                   confirmLabel: 'Create',
                   onConfirm: (name) => {
                     if (name.trim() && onAddFolder) {
-                      onAddFolder(name.trim(), folder.id);
+                      onAddFolder(name.trim(), node.id);
                     }
                   }
                 });
@@ -509,17 +674,17 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setModalInputValue(folder.name);
+                  setModalInputValue(node.name);
                   setModalConfig({
                     isOpen: true,
                     type: 'input',
                     title: 'Rename Folder',
                     placeholder: 'New name',
-                    initialValue: folder.name,
+                    initialValue: node.name,
                     confirmLabel: 'Rename',
                     onConfirm: (name) => {
-                      if (name.trim() && name !== folder.name) {
-                        onUpdateFolder(folder.id, name.trim());
+                      if (name.trim() && name !== node.name) {
+                        onUpdateFolder(node.id, name.trim());
                       }
                     }
                   });
@@ -538,10 +703,10 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
                     isOpen: true,
                     type: 'confirm',
                     title: 'Delete Folder',
-                    message: `Delete "${folder.name}" and all its contents?`,
+                    message: `Delete "${node.name}" and all its contents?`,
                     confirmLabel: 'Delete',
                     confirmColor: 'bg-red-500',
-                    onConfirm: () => onDeleteFolder(folder.id)
+                    onConfirm: () => onDeleteFolder(node.id)
                   });
                 }}
                 className="p-1 text-gray-400 hover:text-red-500 transition-colors"
@@ -552,11 +717,10 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
             )}
           </div>
         </div>
-        
-        {/* Child Folders */}
+
         {isExpanded && hasChildren && (
           <div className="mt-0.5">
-            {folder.children.map(child => renderFolderTree(child))}
+            {node.children.map(child => renderTreeNode(child))}
           </div>
         )}
       </div>
@@ -785,7 +949,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
         )}
 
         {/* Empty State */}
-        {!loading && !error && displayItems.length === 0 && (
+        {!loading && !error && treeNodes.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-gray-400">
              <span className="material-symbols-outlined text-4xl mb-2 opacity-50">
                {searchQuery ? 'search_off' : 'folder_open'}
@@ -806,282 +970,30 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
              )}
           </div>
         )}
-        
-        {/* Render content based on current view */}
-        {!loading && !error && currentFolderId === null && (
+        {!loading && !error && treeNodes.length > 0 && (
           <>
-            {/* Tree View - Show folder tree */}
-            {buildFolderTree(folders).map(folder => renderFolderTree(folder))}
-            
-            {/* Root notes (notes without folder) */}
-            {displayItems.filter(item => !('isFolder' in item)).map((item: any) => {
-              const note = item as Note;
-              return (
-                <div
-                  key={note.id}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, note.id)}
-                  onClick={() => onSelectNote(note.id)}
-                  className={`group relative transition-all cursor-pointer rounded-lg px-3 py-2.5 flex items-center gap-2.5 ${
-                    selectedNoteId === note.id 
-                      ? 'bg-primary/5 dark:bg-primary/10' 
-                      : 'hover:bg-white dark:hover:bg-gray-800/30'
-                  }`}
-                >
-                  {/* Note Icon */}
-                  <div className={`shrink-0 p-1.5 rounded-md ${
-                    note.type === 'Markdown' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 
-                    note.type === 'Rich Text' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' :
-                    note.type === 'Mind Map' ? 'bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400' :
-                    'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400'
-                  }`}>
-                    <span className="material-symbols-outlined text-lg">
-                      {note.type === 'Markdown' ? 'markdown' : 
-                      note.type === 'Rich Text' ? 'format_size' : 
-                      note.type === 'Mind Map' ? 'account_tree' : 'draw'}
-                    </span>
-                  </div>
-                  
-                  {/* Note Content */}
-                  <div className="flex-1 min-w-0">
-                    <h3 className={`text-sm font-medium truncate ${selectedNoteId === note.id ? 'text-primary' : 'text-gray-700 dark:text-gray-200'}`}>
-                      {note.title}
-                    </h3>
-                    <div className="text-[10px] text-gray-400 truncate">{note.updatedAt}</div>
-                  </div>
-
-                  {/* Tags */}
-                  {note.tags && note.tags.length > 0 && (
-                    <div className="flex items-center gap-1">
-                      {note.tags.slice(0, 2).map((tag, idx) => {
-                        const tagObj = typeof tag === 'string' ? { name: tag, color: '#6b7280' } : tag;
-                        return (
-                          <span 
-                            key={idx}
-                            className="text-[9px] px-1.5 py-0.5 rounded-md"
-                            style={{ backgroundColor: `${tagObj.color}20`, color: tagObj.color }}
-                          >
-                            {tagObj.name}
-                          </span>
-                        );
-                      })}
-                      {note.tags.length > 2 && (
-                        <span className="text-[9px] text-gray-400">+{note.tags.length - 2}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-1">
-                    {note.isFavorite && (
-                      <span className="material-symbols-outlined text-amber-400 text-sm fill-current">star</span>
-                    )}
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
-                      className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 ${
-                          activeMenuId === note.id ? 'opacity-100' : ''
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-base">more_horiz</span>
-                    </button>
-                  </div>
-
-                  {/* Context Menu */}
-                  {activeMenuId === note.id && (
-                    <div ref={menuRef} className="absolute right-2 top-8 w-40 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden py-1">
-                      <button onClick={(e) => handleMenuAction(e, 'favorite', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                        <span className={`material-symbols-outlined text-sm ${note.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`}>star</span> 
-                        {note.isFavorite ? 'Remove Favorite' : 'Add Favorite'}
-                      </button>
-                      <button onClick={(e) => handleMenuAction(e, 'tags', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-sm">label</span> Add Tag
-                      </button>
-                      <button onClick={(e) => handleMenuAction(e, 'folder', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-sm">folder</span> Move
-                      </button>
-                      <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
-                      <button onClick={(e) => handleMenuAction(e, 'delete', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-sm">delete</span> Delete
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </>
-        )}
-
-        {/* Folder view - show notes in current folder */}
-        {!loading && !error && currentFolderId !== null && notes
-          .filter(n => matchNoteToFolder(n, currentFolderId))
-          .map((note) => {
-            // RENDER NOTE ITEM IN FOLDER VIEW
-            return (
-              <div 
-                key={note.id}
-                draggable
-                onDragStart={(e) => handleDragStart(e, note.id)}
-                onClick={() => onSelectNote(note.id)}
-                className={`group relative transition-all border border-transparent cursor-pointer ${
-                  viewMode === 'grid' 
-                    ? `rounded-xl p-4 flex flex-col ${
-                        selectedNoteId === note.id 
-                        ? 'bg-white dark:bg-[#1c2b33] border-primary shadow-md ring-1 ring-primary' 
-                        : 'bg-white dark:bg-[#1c2b33] hover:border-gray-200 dark:hover:border-gray-700 shadow-sm'
-                      }`
-                    : `px-3 py-3 rounded-lg flex items-start gap-3 border-b border-gray-100 dark:border-gray-800/50 last:border-0 ${
-                        selectedNoteId === note.id 
-                        ? 'bg-primary/5 dark:bg-primary/10' 
-                        : 'hover:bg-white dark:hover:bg-gray-800/30'
-                      }`
+            {draggedItem && (
+              <div
+                onDragEnter={(e) => handleDragEnter(e, null)}
+                onDragOver={(e) => handleDragOver(e, null)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, null)}
+                className={`mb-2 text-[11px] px-3 py-2 rounded-lg border border-dashed ${
+                  dragOverFolderId === null ? 'border-primary bg-primary/10 text-primary' : 'border-gray-300 text-gray-500 dark:text-gray-400'
                 }`}
               >
-                {/* Context Menu Logic */}
-                {activeMenuId === note.id && (
-                    <div ref={menuRef} className="absolute right-2 top-8 w-40 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100 py-1">
-                        {!isTrashView ? (
-                          <>
-                            <button onClick={(e) => handleMenuAction(e, 'favorite', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                              <span className={`material-symbols-outlined text-sm ${note.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`}>star</span> 
-                              {note.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-                            </button>
-                            <button onClick={(e) => handleMenuAction(e, 'tags', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                              <span className="material-symbols-outlined text-sm">label</span> {t.noteList.tagBtn}...
-                            </button>
-                            <button onClick={(e) => handleMenuAction(e, 'folder', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                              <span className="material-symbols-outlined text-sm">folder</span> {t.noteList.moveBtn}...
-                            </button>
-                          </>
-                        ) : (
-                          <button onClick={(e) => handleMenuAction(e, 'restore', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                            <span className="material-symbols-outlined text-sm text-green-500">restore_from_trash</span> 
-                            {t.language === 'zh' ? '从回收站还原' : 'Restore from Trash'}
-                          </button>
-                        )}
-                        <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
-                        <button onClick={(e) => handleMenuAction(e, 'delete', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 flex items-center gap-2">
-                          <span className="material-symbols-outlined text-sm">{isTrashView ? 'delete_forever' : 'delete'}</span> 
-                          {isTrashView ? (t.language === 'zh' ? '永久删除' : 'Delete Forever') : t.noteList.confirmDelete}
-                        </button>
-                    </div>
-                )}
-
-                {viewMode === 'grid' ? (
-                  // DETAILED CARD VIEW (GRID)
-                  <>
-                    <div className="flex justify-between items-start mb-2">
-                      <div className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md flex items-center gap-1 ${
-                        note.type === 'Markdown' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 
-                        note.type === 'Rich Text' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' :
-                        note.type === 'Mind Map' ? 'bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400' :
-                        'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400'
-                      }`}>
-                          <span className="material-symbols-outlined text-[10px]">
-                            {note.type === 'Markdown' ? 'markdown' : 
-                            note.type === 'Rich Text' ? 'format_size' : 
-                            note.type === 'Mind Map' ? 'account_tree' : 'draw'}
-                          </span>
-                          {note.type}
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        {note.isFavorite && (
-                          <span className="material-symbols-outlined text-amber-400 text-sm fill-current">star</span>
-                        )}
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
-                          className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 transition-all ${
-                              activeMenuId === note.id ? 'opacity-100 bg-gray-100 dark:bg-gray-700 text-gray-600' : ''
-                          }`}
-                        >
-                          <span className="material-symbols-outlined text-base">more_horiz</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <h3 className="font-bold text-sm mb-1 text-gray-900 dark:text-gray-100">{note.title}</h3>
-                    
-                    <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-3 h-8 leading-relaxed">
-                      {note.content ? note.content.replace(/[#*`>]/g, '') : 'No additional text content.'}
-                    </p>
-
-                    <div className="mt-auto flex items-center justify-between">
-                      <span className="text-[10px] text-gray-400">{note.updatedAt}</span>
-                    </div>
-                  </>
-                ) : (
-                  // COMPACT LIST VIEW ROW (Styled like screenshot)
-                  <>
-                    <div className={`shrink-0 p-1.5 rounded-md self-center ${
-                        note.type === 'Markdown' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 
-                        note.type === 'Rich Text' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' :
-                        note.type === 'Mind Map' ? 'bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400' :
-                        'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400'
-                      }`}>
-                        <span className="material-symbols-outlined text-lg">
-                          {note.type === 'Markdown' ? 'markdown' : 
-                          note.type === 'Rich Text' ? 'format_size' : 
-                          note.type === 'Mind Map' ? 'account_tree' : 'draw'}
-                        </span>
-                    </div>
-                    
-                    <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                      <h3 className={`text-sm font-medium truncate ${selectedNoteId === note.id ? 'text-primary' : 'text-gray-700 dark:text-gray-200'}`}>
-                        {note.title}
-                      </h3>
-                       <div className="text-[10px] text-gray-400 truncate flex items-center gap-2">
-                          <span>{note.updatedAt}</span>
-                          {note.content && (
-                            <span className="opacity-60 truncate max-w-[150px]">{String(note.content).substring(0, 30).replace(/[#*]/g, '')}</span>
-                          )}
-                       </div>
-                    </div>
-
-                    {/* Tags */}
-                    {note.tags && note.tags.length > 0 && (
-                      <div className="flex items-center gap-1">
-                        {note.tags.slice(0, 2).map((tag, idx) => {
-                          const tagObj = typeof tag === 'string' ? { name: tag, color: '#6b7280' } : tag;
-                          return (
-                            <span 
-                              key={idx}
-                              className="text-[9px] px-1.5 py-0.5 rounded-md"
-                              style={{ backgroundColor: `${tagObj.color}20`, color: tagObj.color }}
-                            >
-                              {tagObj.name}
-                            </span>
-                          );
-                        })}
-                        {note.tags.length > 2 && (
-                          <span className="text-[9px] text-gray-400">+{note.tags.length - 2}</span>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-1 opacity-100 group-hover:opacity-100 transition-opacity">
-                      {note.isFavorite && (
-                        <span className="material-symbols-outlined text-amber-400 text-sm fill-current">star</span>
-                      )}
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
-                        className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 transition-all ${
-                            activeMenuId === note.id ? 'opacity-100' : ''
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-base">more_horiz</span>
-                      </button>
-                    </div>
-                  </>
-                )}
+                {t.language === 'zh' ? '拖到这里移动到根目录' : 'Drop here to move into root'}
               </div>
-            );
-          })}
+            )}
+            {treeNodes.map(node => renderTreeNode(node))}
+          </>
+        )}
       </div>
       <div className="p-3 border-t border-gray-200 dark:border-gray-800 flex justify-between items-center text-[10px] text-gray-400">
         <span>
           {searchQuery
-            ? `"${searchQuery}": ${displayItems.length} ${t.noteList.items}`
-            : `${displayItems.length} ${t.noteList.items}`
+            ? `"${searchQuery}": ${visibleNoteCount} ${t.noteList.items}`
+            : `${visibleNoteCount} ${t.noteList.items}`
           }
         </span>
         <span className="flex items-center gap-1">

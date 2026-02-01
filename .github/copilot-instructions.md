@@ -6,7 +6,7 @@
 - **前端**: React 18.2 + TypeScript + Vite + Zustand (状态管理)
 - **后端**: Express + TypeScript + Prisma ORM + Socket.IO
 - **数据库**: PostgreSQL (通过 Prisma ORM)
-- **部署**: Docker Compose (nginx 反向代理)
+- **本地开发**: 无需 Docker，使用本地 PostgreSQL
 
 ### 目录结构
 ```
@@ -70,18 +70,61 @@ AIProviderFactory.createProvider(provider, config)
 ## 关键工作流
 
 ### 启动开发环境
-```bash
-# 完整启动(需要 Docker)
-docker-compose up -d        # 启动 PostgreSQL
-cd backend && npm run dev   # 启动后端 (端口 4000)
-npm run dev                 # 启动前端 (端口 3200)
 
-# 数据库操作
-cd backend
-npm run prisma:generate     # 生成 Prisma Client
-npm run prisma:migrate      # 运行迁移
-npm run create-admin        # 创建管理员用户
+#### 推荐方式：使用启动脚本（本地开发）
+```bash
+# 在项目根目录执行（前提：已安装 PostgreSQL 并启动）
+bash start.sh
+
+# 脚本会自动完成以下操作：
+# 1. 检查 Node.js 和依赖
+# 2. 安装前端和后端依赖
+# 3. 初始化数据库（Prisma 迁移）
+# 4. 启动后端服务 (端口 3215)
+# 5. 启动前端服务 (端口 3210)
 ```
+
+#### 本地开发环境前置要求
+1. **安装 PostgreSQL 14+**
+   ```bash
+   # macOS
+   brew install postgresql@14
+   brew services start postgresql@14
+   
+   # Linux
+   sudo apt-get install postgresql postgresql-contrib
+   sudo systemctl start postgresql
+   ```
+
+2. **配置数据库**
+   ```bash
+   # 运行数据库初始化脚本
+   bash setup-local-db.sh
+   ```
+
+#### 手动启动（本地开发）
+如果需要分别启动前后端，可以使用以下命令：
+```bash
+# 终端1：启动后端 (端口 3215)
+cd backend
+npm install
+npm run prisma:generate     # 生成 Prisma Client
+npm run prisma:migrate      # 运行数据库迁移
+npm run dev
+
+# 终端2：启动前端 (端口 3210)
+npm install
+npm run dev
+```
+
+#### 环境配置文件
+- 前端配置：无需配置，自动连接本地后端（http://localhost:3215）
+- 后端配置：`backend/.env` 需包含以下关键变量
+  ```
+  DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_ignite_note
+  JWT_SECRET=your_secret_key
+  NODE_ENV=development
+  ```
 
 ### 添加新 API 端点
 1. 在 `backend/src/services/` 添加/扩展 Service 类
@@ -126,7 +169,7 @@ npm run create-admin        # 创建管理员用户
 ## 特殊注意事项
 
 ### CORS 配置
-- 后端支持多个来源,包含 `localhost:3200` (开发) 和 `localhost:3210` (Docker)
+- 后端支持本地开发源：`localhost:3210` (前端), `localhost:3215` (后端)
 - 配置位于 `backend/src/app.ts`
 
 ### 文件上传
