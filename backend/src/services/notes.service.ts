@@ -169,7 +169,7 @@ export class NotesService {
     const skip = (page - 1) * limit;
 
     const where: any = {
-      isDeleted: false,
+      isDeleted: params.isDeleted ?? false,
       OR: [
         { authorId: userId },
         { workspace: { members: { some: { userId } } } },
@@ -431,7 +431,6 @@ export class NotesService {
     const note = await prisma.note.findFirst({
       where: {
         id: noteId,
-        isDeleted: false,
         OR: [
           { authorId: userId },
           { workspace: { members: { some: { userId, role: { in: ['OWNER', 'ADMIN'] } } } } },
@@ -447,6 +446,14 @@ export class NotesService {
       );
     }
 
+    if (note.isDeleted) {
+      // Permanent delete
+      await prisma.note.delete({
+        where: { id: noteId },
+      });
+      return { success: true, permanent: true };
+    }
+
     // Soft delete
     await prisma.note.update({
       where: { id: noteId },
@@ -456,7 +463,50 @@ export class NotesService {
       },
     });
 
-    return { success: true };
+    return { success: true, permanent: false };
+  }
+
+  /**
+   * Restore a soft-deleted note
+   */
+  async restore(userId: string, noteId: string) {
+    const note = await prisma.note.findFirst({
+      where: {
+        id: noteId,
+        isDeleted: true,
+        OR: [
+          { authorId: userId },
+          { workspace: { members: { some: { userId, role: { in: ['OWNER', 'ADMIN', 'EDITOR'] } } } } },
+        ],
+      },
+    });
+
+    if (!note) {
+      throw new ApiErrorClass(
+        'NOTE_NOT_FOUND',
+        'Note not found or access denied',
+        404
+      );
+    }
+
+    const restoredNote = await prisma.note.update({
+      where: { id: noteId },
+      data: {
+        isDeleted: false,
+        deletedAt: null,
+      },
+      include: {
+        content: true,
+        folder: true,
+        tags: {
+          include: {
+            tag: true,
+          },
+        },
+      },
+    });
+
+    return restoredNote;
   }
 
   /**

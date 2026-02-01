@@ -269,6 +269,43 @@ export class AuthController {
   };
 
   /**
+   * POST /api/users/avatar
+   * Upload user avatar
+   */
+  uploadAvatar = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.userId) {
+        error(res, 'UNAUTHORIZED', 'User ID required', 401);
+        return;
+      }
+
+      if (!req.file) {
+        error(res, 'NO_FILE', 'No avatar file provided', 400);
+        return;
+      }
+
+      // 构建头像URL
+      const avatarUrl = `/uploads/${req.file.filename}`;
+
+      // 更新用户头像
+      const profile = await authService.updateProfile(req.userId, { image: avatarUrl });
+      success(res, profile);
+    } catch (err) {
+      if (err instanceof Error) {
+        const apiErr = err as any;
+        error(
+          res,
+          apiErr.code || 'AVATAR_UPLOAD_FAILED',
+          apiErr.message || 'Failed to upload avatar',
+          apiErr.statusCode || 500
+        );
+      } else {
+        error(res, 'AVATAR_UPLOAD_FAILED', 'Failed to upload avatar', 500);
+      }
+    }
+  };
+
+  /**
    * DELETE /api/users/profile
    * Delete user account
    */
@@ -348,6 +385,62 @@ export class AuthController {
         );
       } else {
         error(res, 'AI_SETTINGS_UPDATE_FAILED', 'Failed to update AI settings', 500);
+      }
+    }
+  };
+
+  /**
+   * GET /api/users/settings
+   * Get user settings
+   */
+  getUserSettings = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.userId) {
+        error(res, 'UNAUTHORIZED', 'User ID required', 401);
+        return;
+      }
+
+      const settings = await authService.getUserSettings(req.userId);
+      success(res, settings);
+    } catch (err) {
+      if (err instanceof Error) {
+        const apiErr = err as any;
+        error(
+          res,
+          apiErr.code || 'USER_SETTINGS_FETCH_FAILED',
+          apiErr.message || 'Failed to fetch user settings',
+          apiErr.statusCode || 500
+        );
+      } else {
+        error(res, 'USER_SETTINGS_FETCH_FAILED', 'Failed to fetch user settings', 500);
+      }
+    }
+  };
+
+  /**
+   * PUT /api/users/settings
+   * Update user settings
+   */
+  updateUserSettings = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.userId) {
+        error(res, 'UNAUTHORIZED', 'User ID required', 401);
+        return;
+      }
+
+      const settings = await authService.updateUserSettings(req.userId, req.body);
+      success(res, settings);
+    } catch (err) {
+      if (err instanceof Error) {
+        const apiErr = err as any;
+        error(
+          res,
+          apiErr.code || 'USER_SETTINGS_UPDATE_FAILED',
+          apiErr.message || 'Failed to update user settings',
+          apiErr.statusCode || 500
+        );
+      } else {
+        error(res, 'USER_SETTINGS_UPDATE_FAILED', 'Failed to update user settings', 500);
       }
     }
   };

@@ -5,6 +5,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Use Aliyun Alpine mirror
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
 # Install build dependencies
 RUN apk add --no-cache python3 make g++
 
@@ -29,6 +32,9 @@ RUN npm run build
 FROM node:20-alpine
 
 WORKDIR /app
+
+# Use Aliyun Alpine mirror
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 # Install runtime and build dependencies (bcrypt needs python make g++, Prisma needs OpenSSL)
 RUN apk add --no-cache \

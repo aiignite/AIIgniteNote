@@ -39,6 +39,8 @@ interface AIAssistant {
 
 const AIDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'Models' | 'Assistants' | 'Chat'>('Chat');
+  const [modelViewMode, setModelViewMode] = useState<'grid' | 'list'>('grid');
+  const [assistantViewMode, setAssistantViewMode] = useState<'grid' | 'list'>('grid');
   const [inputText, setInputText] = useState('');
   const [models, setModels] = useState<any[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(true);
@@ -78,7 +80,7 @@ const AIDashboard: React.FC = () => {
         console.log('[Load] Models synced to IndexedDB:', dbModels.length);
 
         // All models come from database - mark them all as custom/deletable
-        setModels(dbModels.map((m: any) => ({
+        const mappedModels = dbModels.map((m: any) => ({
           id: m.id,
           name: m.name,
           modelId: m.modelId,
@@ -90,12 +92,16 @@ const AIDashboard: React.FC = () => {
           context: m.context || 'N/A',
           isCustom: true,  // All database models are deletable
           popularity: m.popularity,
-        })));
+          defaultTemplateId: m.defaultTemplateId,
+        }));
+        console.log('[Load] Mapped models:', mappedModels);
+        setModels(mappedModels);
         console.log('[Load] Models loaded:', dbModels.length);
       }
 
       // Load assistants from database only
       const assistantsResponse = await api.getAIAssistants() as any;
+      let firstAssistant: AIAssistant | null = null;
       if (assistantsResponse.success && assistantsResponse.data) {
         const { system, custom } = assistantsResponse.data;
         const allAssistants = [...(system || []), ...(custom || [])];
@@ -110,12 +116,15 @@ const AIDashboard: React.FC = () => {
           isCustom: !a.isSystem,  // Only non-system assistants are deletable
         }));
         setAssistants(mappedAssistants);
-        if (!currentAssistant && mappedAssistants.length > 0) {
-          setCurrentAssistant(mappedAssistants[0]);
+        if (mappedAssistants.length > 0) {
+          const defaultAssistant = mappedAssistants.find((a: any) => a.isDefault);
+          firstAssistant = defaultAssistant || mappedAssistants[0];
+          setCurrentAssistant(firstAssistant);
         }
         console.log('[Load] Assistants loaded:', allAssistants.length);
       }
       setLoadingProviders(false);
+      return firstAssistant;
     } catch (error) {
       console.error('[Load] Error loading data:', error);
       
@@ -137,15 +146,17 @@ const AIDashboard: React.FC = () => {
             isCustom: !a.isSystem,
           }));
           setAssistants(mappedAssistants);
-          if (!currentAssistant && mappedAssistants.length > 0) {
-            setCurrentAssistant(mappedAssistants[0]);
-          }
-          console.log('[Load] Loaded assistants from IndexedDB cache:', cachedAssistants.length);
+          const defaultAssistant = mappedAssistants.find((a: any) => a.isDefault);
+          const firstAssistant = defaultAssistant || mappedAssistants[0];
+          setCurrentAssistant(firstAssistant);
+          setLoadingProviders(false);
+          return firstAssistant;
         }
       } catch (cacheError) {
         console.error('[Load] Failed to load from IndexedDB cache:', cacheError);
       }
       setLoadingProviders(false);
+      return null;
     }
   };
 
@@ -194,7 +205,7 @@ const AIDashboard: React.FC = () => {
   useEffect(() => {
     const loadAllData = async () => {
       // 先加载自定义模型（需要等待完成）
-      await loadCustomModelsAndAssistants();
+      const firstAssistant = await loadCustomModelsAndAssistants();
       await loadAISettings();
       await loadConversationHistory();
       
@@ -202,7 +213,8 @@ const AIDashboard: React.FC = () => {
       // Only create new chat if we don't have any conversations
       if (chatMessages.length === 0 && !currentConversationId) {
         try {
-          await handleNewChat();
+          // Pass the freshly loaded assistant if state isn't updated yet
+          await handleNewChat(firstAssistant || undefined);
         } catch (error) {
           console.error('Failed to initialize new chat:', error);
         }
@@ -280,8 +292,17 @@ const AIDashboard: React.FC = () => {
 
   const currentModelLabel = useMemo(() => {
     const modelId = currentConversationMeta?.model || currentAssistant?.model || aiSettings?.defaultModel;
+    console.log('[AIDashboard] Calculating currentModelLabel:', {
+      conversationMetaModel: currentConversationMeta?.model,
+      assistantModel: currentAssistant?.model,
+      defaultModel: aiSettings?.defaultModel,
+      selectedModelId: modelId,
+      availableModels: models.map((m: any) => ({ id: m.id, modelId: m.modelId, name: m.name }))
+    });
     const dbModel = models.find((m: any) => m.modelId === modelId);
-    return dbModel?.name || modelId || '未选择模型';
+    const result = dbModel?.name || modelId || '未选择模型';
+    console.log('[AIDashboard] Found model:', dbModel ? { id: dbModel.id, modelId: dbModel.modelId, name: dbModel.name } : null, 'result:', result);
+    return result;
   }, [currentConversationMeta?.model, currentAssistant?.model, aiSettings?.defaultModel, models]);
 
   const currentAssistantLabel = currentAssistant?.name || '未选择助手';
@@ -297,8 +318,6 @@ const AIDashboard: React.FC = () => {
             await indexedDB.cacheAIModel(response.data);
           }
         }
-        const updatedModels = models.map(m => m.id === editingModel.id ? { ...m, ...data, isCustom: m.isCustom || true } : m);
-        setModels(updatedModels);
       } else {
         // Create new model in database
         const response = await api.createAIModel({
@@ -309,21 +328,19 @@ const AIDashboard: React.FC = () => {
           speed: data.speed,
           cost: data.cost,
           context: data.context,
-          description: data.desc,
+          description: data.description,
+          defaultTemplateId: data.defaultTemplateId,
         }) as any;
-        const newModel = {
-          ...data,
-          id: response.data?.id || Date.now().toString(),
-          isCustom: true
-        };
+        
         // Cache to IndexedDB
         if (response.success && response.data) {
           await indexedDB.cacheAIModel(response.data);
         }
-        setModels([...models, newModel]);
       }
       setShowModelForm(false);
       setEditingModel(null);
+      // Reload models to get updated data including template relations
+      loadCustomModelsAndAssistants();
     } catch (error) {
       console.error('Failed to save model:', error);
       alert('Failed to save model. Please try again.');
@@ -368,10 +385,6 @@ const AIDashboard: React.FC = () => {
         if (response.success && response.data) {
           await indexedDB.cacheAIAssistant(response.data);
         }
-        const updatedAssistants = assistants.map(a =>
-          a.id === editingAssistant.id ? { ...a, ...data, isCustom: a.isCustom || true } : a
-        );
-        setAssistants(updatedAssistants);
       } else {
         const response = await api.createAIAssistant({
           ...data,
@@ -381,23 +394,42 @@ const AIDashboard: React.FC = () => {
         if (response.success && response.data) {
           await indexedDB.cacheAIAssistant(response.data);
         }
-
-        const newAssistant: AIAssistant = { 
-          ...data, 
-          id: response.data?.id || Date.now().toString(), 
-          isSystem: false, 
-          isCustom: true, 
-          usageCount: 0 
-        };
-        setAssistants([...assistants, newAssistant]);
       }
       setShowAssistantForm(false);
       setEditingAssistant(null);
       
+      // Reload to reflect changes and potentially updated isDefault status on other assistants
       loadCustomModelsAndAssistants();
     } catch (error) {
       console.error('Failed to save assistant:', error);
       alert('Failed to save assistant. Please try again.');
+    }
+  };
+
+  const handleSetDefaultAssistant = async (assistantId: string) => {
+    try {
+      const response = await api.updateAIAssistant(assistantId, { isDefault: true }) as any;
+      if (response.success) {
+        // Refresh assistants list
+        const assistantsResponse = await api.getAIAssistants() as any;
+        if (assistantsResponse.success && assistantsResponse.data) {
+          const { system, custom } = assistantsResponse.data;
+          const allAssistants = [...(system || []), ...(custom || [])];
+          const mappedAssistants = allAssistants.map((a: any) => ({
+            ...a,
+            isCustom: !a.isSystem,
+          }));
+          setAssistants(mappedAssistants);
+          
+          // If we just set a default, it should probably be the current one if none selected
+          const newDefault = mappedAssistants.find((a: any) => a.isDefault);
+          if (newDefault && !currentAssistant) {
+            setCurrentAssistant(newDefault);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to set default assistant:', error);
     }
   };
 
@@ -848,7 +880,23 @@ const AIDashboard: React.FC = () => {
            <div className="p-12 max-w-6xl mx-auto w-full animate-in slide-in-from-bottom-4 duration-300">
             {/* 标题栏 - 添加新增按钮 */}
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">Available Models</h2>
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-bold">Available Models</h2>
+                <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                  <button 
+                    onClick={() => setModelViewMode('grid')}
+                    className={`p-1 flex items-center justify-center rounded-md transition-all ${modelViewMode === 'grid' ? 'bg-white dark:bg-gray-700 shadow-sm text-primary' : 'text-gray-400 hover:text-gray-600'}`}
+                  >
+                    <span className="material-symbols-outlined text-[20px]">grid_view</span>
+                  </button>
+                  <button 
+                    onClick={() => setModelViewMode('list')}
+                    className={`p-1 flex items-center justify-center rounded-md transition-all ${modelViewMode === 'list' ? 'bg-white dark:bg-gray-700 shadow-sm text-primary' : 'text-gray-400 hover:text-gray-600'}`}
+                  >
+                    <span className="material-symbols-outlined text-[20px]">view_list</span>
+                  </button>
+                </div>
+              </div>
               <button
                 onClick={() => {
                   setEditingModel(null);
@@ -888,7 +936,7 @@ const AIDashboard: React.FC = () => {
                   Add Your First Model
                 </button>
               </div>
-            ) : (
+            ) : modelViewMode === 'grid' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {models.map(model => (
                   <div key={model.id} className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:shadow-xl hover:border-primary/50 transition-all cursor-pointer group relative">
@@ -935,30 +983,88 @@ const AIDashboard: React.FC = () => {
                     <div className="flex items-center gap-4 text-xs font-medium text-gray-400 border-t border-gray-100 dark:border-gray-800 pt-4">
                       <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">memory</span> {model.context} Context</span>
                       <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">payments</span> {model.cost}</span>
+                      {model.defaultTemplateId && (
+                        <span className="flex items-center gap-1 text-primary"><span className="material-symbols-outlined text-sm">auto_awesome</span> Has Default Template</span>
+                      )}
                     </div>
-                    {/* 热度指示器 */}
-                    {model.popularity !== undefined && (
-                      <div className="flex items-center gap-1 mt-2">
-                        <span className="text-[10px] text-gray-400">Popularity:</span>
-                        <div className="flex gap-0.5">
-                          {[...Array(5)].map((_, i) => (
-                            <span
-                              key={i}
-                              className={`material-symbols-outlined text-[10px] ${
-                                i < Math.ceil(model.popularity / 20)
-                                  ? 'text-yellow-400'
-                                  : 'text-gray-300'
-                              }`}
-                            >
-                              star
-                            </span>
-                          ))}
-                        </div>
-                        <span className="text-[10px] text-gray-400 ml-1">({model.popularity})</span>
-                      </div>
-                    )}
                   </div>
                 ))}
+              </div>
+            ) : (
+              <div className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden shadow-sm">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800">
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Model Name</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Provider</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Speed</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Context</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Status</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {models.map(model => (
+                      <tr key={model.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50/50 dark:hover:bg-gray-800/20 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="size-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-sm">neurology</span>
+                            </div>
+                            <div>
+                              <div className="font-bold text-sm">{model.name}</div>
+                              {model.defaultTemplateId && (
+                                <div className="text-[10px] text-primary flex items-center gap-0.5 mt-0.5">
+                                  <span className="material-symbols-outlined text-[10px]">auto_awesome</span>
+                                  Default Template active
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500">
+                            {model.provider}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs text-gray-500">{model.speed}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs text-gray-500">{model.context}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {model.isCustom ? (
+                            <span className="px-2 py-0.5 bg-primary/10 text-primary rounded-lg text-[10px] font-bold">Custom</span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-400 rounded-lg text-[10px] font-bold">Standard</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => {
+                                setEditingModel(model);
+                                setShowModelForm(true);
+                              }}
+                              className="p-1.5 hover:bg-primary/10 hover:text-primary rounded-lg transition-colors"
+                            >
+                              <span className="material-symbols-outlined text-sm">edit</span>
+                            </button>
+                            {model.isCustom && (
+                              <button
+                                onClick={() => handleDeleteModel(model.id)}
+                                className="p-1.5 hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-colors"
+                              >
+                                <span className="material-symbols-outlined text-sm">delete</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
            </div>
@@ -968,7 +1074,23 @@ const AIDashboard: React.FC = () => {
           <div className="p-12 max-w-6xl mx-auto w-full animate-in slide-in-from-bottom-4 duration-300">
             {/* 标题栏 - 添加新增按钮 */}
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">Specialized Assistants</h2>
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-bold">Specialized Assistants</h2>
+                <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                  <button 
+                    onClick={() => setAssistantViewMode('grid')}
+                    className={`p-1 flex items-center justify-center rounded-md transition-all ${assistantViewMode === 'grid' ? 'bg-white dark:bg-gray-700 shadow-sm text-primary' : 'text-gray-400 hover:text-gray-600'}`}
+                  >
+                    <span className="material-symbols-outlined text-[20px]">grid_view</span>
+                  </button>
+                  <button 
+                    onClick={() => setAssistantViewMode('list')}
+                    className={`p-1 flex items-center justify-center rounded-md transition-all ${assistantViewMode === 'list' ? 'bg-white dark:bg-gray-700 shadow-sm text-primary' : 'text-gray-400 hover:text-gray-600'}`}
+                  >
+                    <span className="material-symbols-outlined text-[20px]">view_list</span>
+                  </button>
+                </div>
+              </div>
               <button
                 onClick={() => {
                   setEditingAssistant(null);
@@ -1001,70 +1123,178 @@ const AIDashboard: React.FC = () => {
                   Create Your First Assistant
                 </button>
               </div>
-            ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {assistants.map(agent => (
-                <div key={agent.id} className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer text-center group relative">
-                  {/* 编辑/删除按钮 - 只对自定义助手显示删除按钮 */}
-                  <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+            ) : assistantViewMode === 'grid' ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {assistants.map(agent => (
+                  <div key={agent.id} className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 hover:shadow-xl transition-all cursor-pointer text-center group relative">
+                    {/* 编辑/删除/设为默认按钮 - 悬停显示 */}
+                    <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                      {!agent.isDefault && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSetDefaultAssistant(agent.id);
+                          }}
+                          className="p-1.5 bg-white dark:bg-gray-800 hover:bg-yellow-500 hover:text-white rounded-lg transition-colors shadow-sm"
+                          title="Set as Default"
+                        >
+                          <span className="material-symbols-outlined text-sm">star</span>
+                        </button>
+                      )}
+                      {!agent.isSystem && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingAssistant(agent);
+                            setShowAssistantForm(true);
+                          }}
+                          className="p-1.5 bg-white dark:bg-gray-800 hover:bg-primary hover:text-white rounded-lg transition-colors shadow-sm"
+                          title="Edit assistant"
+                        >
+                          <span className="material-symbols-outlined text-sm">edit</span>
+                        </button>
+                      )}
+                      {agent.isCustom && !agent.isSystem && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteAssistant(agent.id);
+                          }}
+                          className="p-1.5 bg-white dark:bg-gray-800 hover:bg-red-500 hover:text-white rounded-lg transition-colors shadow-sm"
+                          title="Delete assistant"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 状态标签 */}
+                    <div className="absolute top-4 left-4 flex flex-col gap-1">
+                      {agent.isDefault && (
+                        <span className="px-2 py-1 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-600 dark:text-yellow-400 text-[10px] font-bold rounded-lg flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[10px]">star</span>
+                          Default
+                        </span>
+                      )}
+                      {agent.isSystem ? (
+                        <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 text-[10px] font-bold rounded-lg self-start">
+                          System
+                        </span>
+                      ) : (
+                        <span className="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded-lg self-start">
+                          Custom
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="size-20 mx-auto rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center mb-4 mt-4">
+                      <span className="material-symbols-outlined text-4xl text-primary">{agent.avatar || 'smart_toy'}</span>
+                    </div>
+                    <h3 className="text-lg font-bold">{agent.name}</h3>
+                    <span className="inline-block px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3 mt-1">{agent.role}</span>
+                    <p className="text-sm text-gray-500 line-clamp-2 mb-6">{agent.description}</p>
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingAssistant(agent);
-                        setShowAssistantForm(true);
-                      }}
-                      className="p-1.5 bg-white dark:bg-gray-800 hover:bg-primary hover:text-white rounded-lg transition-colors shadow-sm"
-                      title="Edit assistant"
+                      onClick={() => handleSelectAssistant(agent)}
+                      className="w-full py-2 rounded-xl bg-primary text-white text-sm font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all opacity-0 group-hover:opacity-100"
                     >
-                      <span className="material-symbols-outlined text-sm">edit</span>
+                      Chat with {agent.name.split(' ')[0]}
                     </button>
-                    {agent.isCustom && !agent.isSystem && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteAssistant(agent.id);
-                        }}
-                        className="p-1.5 bg-white dark:bg-gray-800 hover:bg-red-500 hover:text-white rounded-lg transition-colors shadow-sm"
-                        title="Delete assistant"
-                      >
-                        <span className="material-symbols-outlined text-sm">delete</span>
-                      </button>
-                    )}
+                    {/* 非悬停状态下的 Start Chat 按钮 */}
+                    <button
+                      className="w-full py-2 rounded-xl bg-primary/10 text-primary text-sm font-bold group-hover:hidden transition-all"
+                    >
+                      Select Assistant
+                    </button>
                   </div>
-
-                  {/* 系统助手标签 */}
-                  {agent.isSystem && (
-                    <div className="absolute top-4 left-4">
-                      <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 text-[10px] font-bold rounded-lg">
-                        System
-                      </span>
-                    </div>
-                  )}
-
-                  {/* 自定义助手标签 */}
-                  {agent.isCustom && !agent.isSystem && (
-                    <div className="absolute top-4 left-4">
-                      <span className="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded-lg">
-                        Custom
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="size-20 mx-auto rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center mb-4">
-                    <span className="material-symbols-outlined text-4xl text-primary">{agent.avatar}</span>
-                  </div>
-                  <h3 className="text-lg font-bold">{agent.name}</h3>
-                  <span className="inline-block px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3 mt-1">{agent.role}</span>
-                  <p className="text-sm text-gray-500 line-clamp-2">{agent.description}</p>
-                  <button
-                    onClick={() => handleSelectAssistant(agent)}
-                    className="mt-6 w-full py-2 rounded-xl bg-primary/10 text-primary text-sm font-bold hover:bg-primary hover:text-white transition-all"
-                  >
-                    Start Chat
-                  </button>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-white dark:bg-[#15232a] border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden shadow-sm">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800">
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Assistant</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Role</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Category</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Model</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {assistants.map(agent => (
+                      <tr key={agent.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50/50 dark:hover:bg-gray-800/20 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="size-10 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-xl">{agent.avatar || 'smart_toy'}</span>
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-sm">{agent.name}</span>
+                                {agent.isDefault && (
+                                  <span className="material-symbols-outlined text-yellow-500 text-sm">star</span>
+                                )}
+                              </div>
+                              <div className="text-xs text-gray-400 line-clamp-1 max-w-[200px]">{agent.description}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 uppercase">
+                            {agent.role}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-sm text-gray-500">{agent.category || 'General'}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-sm text-gray-500">{agent.model || 'Default'}</span>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => handleSelectAssistant(agent)}
+                              className="px-3 py-1 bg-primary text-white text-xs font-bold rounded-lg hover:bg-primary/90 transition-colors mr-2 opacity-0 group-hover:opacity-100"
+                            >
+                              Chat
+                            </button>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100">
+                              {!agent.isDefault && (
+                                <button
+                                  onClick={() => handleSetDefaultAssistant(agent.id)}
+                                  className="p-1.5 hover:bg-yellow-500/10 hover:text-yellow-500 rounded-lg transition-colors"
+                                  title="Set as Default"
+                                >
+                                  <span className="material-symbols-outlined text-sm">star</span>
+                                </button>
+                              )}
+                              {!agent.isSystem && (
+                                <button
+                                  onClick={() => {
+                                    setEditingAssistant(agent);
+                                    setShowAssistantForm(true);
+                                  }}
+                                  className="p-1.5 hover:bg-primary/10 hover:text-primary rounded-lg transition-colors"
+                                >
+                                  <span className="material-symbols-outlined text-sm">edit</span>
+                                </button>
+                              )}
+                              {agent.isCustom && !agent.isSystem && (
+                                <button
+                                  onClick={() => handleDeleteAssistant(agent.id)}
+                                  className="p-1.5 hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-colors"
+                                >
+                                  <span className="material-symbols-outlined text-sm">delete</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         );

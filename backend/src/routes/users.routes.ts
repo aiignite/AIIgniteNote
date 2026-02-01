@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authController } from '../controllers/auth.controller';
 import { authenticate } from '../middleware/auth';
+import { upload } from '../middleware/upload';
 import { z } from 'zod';
 import { validate } from '../middleware/validator';
 
@@ -29,6 +30,13 @@ router.get('/profile', authenticate, authController.getProfile);
 router.put('/profile', authenticate, validate(updateProfileSchema), authController.updateProfile);
 
 /**
+ * @route   POST /api/users/avatar
+ * @desc    Upload user avatar
+ * @access  Private
+ */
+router.post('/avatar', authenticate, upload.single('avatar'), authController.uploadAvatar);
+
+/**
  * @route   DELETE /api/users/profile
  * @desc    Delete user account
  * @access  Private
@@ -48,5 +56,19 @@ router.get('/ai-settings', authenticate, authController.getAISettings);
  * @access  Private
  */
 router.put('/ai-settings', authenticate, authController.updateAISettings);
+
+/**
+ * @route   GET /api/users/settings
+ * @desc    Get user settings
+ * @access  Private
+ */
+router.get('/settings', authenticate, authController.getUserSettings);
+
+/**
+ * @route   PUT /api/users/settings
+ * @desc    Update user settings
+ * @access  Private
+ */
+router.put('/settings', authenticate, authController.updateUserSettings);
 
 export default router;

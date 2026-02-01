@@ -86,7 +86,7 @@ export const assistantsService = {
     });
   },
 
-  async updateAssistant(userId: string, assistantId: string, input: UpdateAssistantInput) {
+  async updateAssistant(userId: string, assistantId: string, input: any) {
     const assistant = await prisma.aIAssistant.findUnique({
       where: { id: assistantId },
     });
@@ -95,11 +95,21 @@ export const assistantsService = {
       throw createError.notFound('Assistant not found');
     }
 
-    if (assistant.isSystem) {
+    // If setting as default, unset other defaults for this user
+    if (input.isDefault === true) {
+      await prisma.aIAssistant.updateMany({
+        where: { userId, isDefault: true },
+        data: { isDefault: false },
+      });
+    }
+
+    // System assistants can only have their isDefault status updated (per user logic would be complex here, 
+    // so we'll only allow updating custom assistants for now as per permissions)
+    if (assistant.isSystem && Object.keys(input).some(k => k !== 'isDefault')) {
       throw createError.badRequest('Cannot update system assistants');
     }
 
-    if (assistant.userId !== userId) {
+    if (!assistant.isSystem && assistant.userId !== userId) {
       throw createError.forbidden('You do not have permission to update this assistant');
     }
 

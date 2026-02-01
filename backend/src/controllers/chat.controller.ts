@@ -5,10 +5,12 @@ import { AuthRequest } from '../middleware/auth';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
+import { config } from '../config';
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, '/app/uploads/chat');
+    const dir = path.resolve(process.cwd(), config.uploadDir, 'chat');
+    cb(null, dir);
   },
   filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -626,7 +628,7 @@ export class ChatController {
           .map(async f => {
             const fileUrl = f.fileUrl as string;
             if (!fileUrl.startsWith('/uploads/')) return;
-            const filePath = path.join('/app', fileUrl);
+            const filePath = path.resolve(process.cwd(), config.uploadDir, path.basename(fileUrl));
             try {
               await fs.unlink(filePath);
             } catch {

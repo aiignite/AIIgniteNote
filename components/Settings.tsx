@@ -28,6 +28,7 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
   const [memberActionId, setMemberActionId] = useState<string | null>(null);
   const [memberLoading, setMemberLoading] = useState(false);
   const [profileForm, setProfileForm] = useState({ name: '', email: '' });
+  const [avatarUploading, setAvatarUploading] = useState(false);
 
   const profileName = profileForm.name || user?.name?.trim() || '';
   const profileEmail = profileForm.email || user?.email || '';
@@ -212,6 +213,25 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
     } catch (error) {
       console.error('Failed to update profile:', error);
       alert(language === 'zh' ? '个人资料更新失败' : 'Failed to update profile');
+    }
+  };
+
+  const handleUploadAvatar = async (file: File) => {
+    if (!file) return;
+
+    setAvatarUploading(true);
+    try {
+      const response = await api.uploadAvatar(file) as any;
+      if (response?.success) {
+        // Update global auth store
+        setUser(response.data);
+        alert(language === 'zh' ? '头像上传成功' : 'Avatar uploaded successfully');
+      }
+    } catch (error) {
+      console.error('Failed to upload avatar:', error);
+      alert(language === 'zh' ? '头像上传失败' : 'Failed to upload avatar');
+    } finally {
+      setAvatarUploading(false);
     }
   };
 
@@ -592,15 +612,35 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
             <div className="flex flex-col md:flex-row gap-8 items-start">
               <div className="relative group shrink-0 mx-auto md:mx-0">
                 {profileImage ? (
-                  <img src={profileImage} className="size-32 rounded-3xl object-cover border-4 border-white dark:border-gray-800 shadow-xl" alt="Profile" />
+                  <img src={profileImage.startsWith('/uploads/') ? `${window.location.origin}${profileImage}` : profileImage} className="size-32 rounded-3xl object-cover border-4 border-white dark:border-gray-800 shadow-xl" alt="Profile" />
                 ) : (
                   <div className="size-32 rounded-3xl border-4 border-white dark:border-gray-800 shadow-xl bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center">
                     <span className="text-2xl font-bold text-primary">{(profileName || profileEmail || 'U').charAt(0).toUpperCase()}</span>
                   </div>
                 )}
-                <button className="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center backdrop-blur-sm">
-                  <span className="material-symbols-outlined">photo_camera</span>
+                <button 
+                  onClick={() => document.getElementById('avatar-input')?.click()}
+                  disabled={avatarUploading}
+                  className="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center backdrop-blur-sm disabled:opacity-50"
+                >
+                  {avatarUploading ? (
+                    <span className="material-symbols-outlined animate-spin">refresh</span>
+                  ) : (
+                    <span className="material-symbols-outlined">photo_camera</span>
+                  )}
                 </button>
+                <input
+                  id="avatar-input"
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      handleUploadAvatar(file);
+                    }
+                  }}
+                  className="hidden"
+                />
               </div>
 
               <div className="flex-1 w-full space-y-5">

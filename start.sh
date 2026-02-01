@@ -4,6 +4,9 @@
 
 set -e
 
+FRONT_PORT=3210
+BACK_PORT=3215
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -43,18 +46,10 @@ kill_port_process() {
     local pid=$(lsof -ti :$port 2>/dev/null || true)
 
     if [ -n "$pid" ]; then
-        print_warning "检测到端口 $port 被 PID $pid 占用"
-        read -p "是否停止占用端口的进程？(y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            print_info "停止进程 $pid ($service_name)..."
-            kill -9 $pid 2>/dev/null || true
-            sleep 1
-            print_success "进程已停止"
-        else
-            print_error "用户取消操作，无法启动 $service_name"
-            exit 1
-        fi
+        print_warning "检测到端口 $port 被 PID $pid 占用，自动停止占用进程以重启 $service_name"
+        kill -9 $pid 2>/dev/null || true
+        sleep 1
+        print_success "已释放端口 $port"
     fi
 }
 
@@ -101,7 +96,7 @@ install_dependencies() {
 
     print_info "安装前端依赖..."
     if [ ! -d "node_modules" ]; then
-        npm install
+        npm install --registry=https://registry.npmmirror.com
         print_success "前端依赖安装完成"
     else
         print_info "前端依赖已存在，跳过安装"
@@ -110,7 +105,7 @@ install_dependencies() {
     print_info "安装后端依赖..."
     cd backend
     if [ ! -d "node_modules" ]; then
-        npm install
+        npm install --registry=https://registry.npmmirror.com
         print_success "后端依赖安装完成"
     else
         print_info "后端依赖已存在，跳过安装"
@@ -156,45 +151,45 @@ init_database() {
 start_frontend() {
     print_header "启动前端服务"
 
-    kill_port_process 3200 "前端服务"
+    kill_port_process $FRONT_PORT "前端服务"
 
-    print_info "前端地址: http://localhost:3200"
-    npm run dev
+    print_info "前端地址: http://localhost:$FRONT_PORT"
+    npm run dev -- --host --port $FRONT_PORT
 }
 
 start_backend() {
     print_header "启动后端服务"
 
-    kill_port_process 4000 "后端服务"
+    kill_port_process $BACK_PORT "后端服务"
 
-    print_info "后端地址: http://localhost:4000"
-    print_info "API 文档: http://localhost:4000/api"
+    print_info "后端地址: http://localhost:$BACK_PORT"
+    print_info "API 文档: http://localhost:$BACK_PORT/api"
     cd backend
-    npm run dev
+    PORT=$BACK_PORT npm run dev
 }
 
 start_all() {
     print_header "启动所有服务（前端 + 后端）"
 
-    kill_port_process 4000 "后端服务"
+    kill_port_process $BACK_PORT "后端服务"
 
     cd backend
     print_info "启动后端服务（后台运行）..."
-    npm run dev &
+    PORT=$BACK_PORT npm run dev &
     BACKEND_PID=$!
     cd ..
 
     print_info "等待后端服务启动..."
     sleep 5
 
-    kill_port_process 3200 "前端服务"
+    kill_port_process $FRONT_PORT "前端服务"
 
     print_info "启动前端服务..."
     print_success "后端 PID: $BACKEND_PID"
-    print_info "前端地址: http://localhost:3200"
-    print_info "后端地址: http://localhost:4000"
+    print_info "前端地址: http://localhost:$FRONT_PORT"
+    print_info "后端地址: http://localhost:$BACK_PORT"
     print_info "按 Ctrl+C 停止所有服务"
-    npm run dev
+    npm run dev -- --host --port $FRONT_PORT
 
     kill $BACKEND_PID 2>/dev/null || true
 }
@@ -223,14 +218,6 @@ start_docker() {
     print_info "  - 健康检查: http://localhost:3215/health"
     print_info "  - 数据库: localhost:5434"
 
-    read -p "是否初始化数据库？(y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        print_info "初始化数据库..."
-        docker-compose exec backend npx prisma migrate deploy
-        print_success "数据库初始化完成"
-    fi
-
     print_info "查看日志: docker-compose logs -f"
     print_info "停止服务: docker-compose down"
 }
@@ -250,22 +237,22 @@ rebuild_docker() {
     print_info "停止现有 Docker 服务..."
     docker-compose down
 
-    print_info "清理旧镜像并重新构建..."
-    docker-compose build --no-cache
+    print_info "正在通过 Docker 重新构建服务..."
+    docker-compose build
 
     print_info "启动服务..."
     docker-compose up -d
 
     print_success "Docker 服务重新构建并部署完成"
-    print_info "前端: http://localhost:3200"
-    print_info "后端: http://localhost:4000"
+    print_info "前端: http://localhost:3210"
+    print_info "后端: http://localhost:3215"
 }
 
 stop_services() {
     print_header "停止本地服务"
 
-    local frontend_pid=$(lsof -ti :3200 2>/dev/null || true)
-    local backend_pid=$(lsof -ti :4000 2>/dev/null || true)
+    local frontend_pid=$(lsof -ti :$FRONT_PORT 2>/dev/null || true)
+    local backend_pid=$(lsof -ti :$BACK_PORT 2>/dev/null || true)
 
     if [ -n "$frontend_pid" ]; then
         print_info "停止前端服务 (PID: $frontend_pid)..."

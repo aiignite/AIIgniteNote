@@ -80,6 +80,7 @@ const apiNoteToLocalNote = (apiNote: any): Note => {
 
   // Extract folder
   const folder = apiNote.folder?.name || 'General';
+  const folderId = apiNote.folder?.id || apiNote.folderId || undefined;
   console.log('[apiNoteToLocalNote] Folder:', folder, '(folder object:', apiNote.folder, ')');
 
   // Extract tags
@@ -101,6 +102,7 @@ const apiNoteToLocalNote = (apiNote: any): Note => {
     createdAt: apiNote.createdAt,
     timestamp: new Date(apiNote.updatedAt).getTime(),
     folder,
+    folderId,
     tags,
     isFavorite: apiNote.isFavorite || false,
   };
@@ -143,7 +145,7 @@ const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
 
   const { primaryColor, getTheme, initialize: initTheme } = useThemeStore();
-  const { initialize: initLanguage } = useLanguageStore();
+  const { t, language, initialize: initLanguage } = useLanguageStore();
 
   // Initialize app
   useEffect(() => {
@@ -202,9 +204,8 @@ const App: React.FC = () => {
             console.warn('[initializeApp] Offline sync initialization failed, continuing without it:', syncError);
           }
 
-          console.log('[initializeApp] Loading notes and folders...');
-          // Load notes and folders
-          await loadNotes();
+          console.log('[initializeApp] Loading folders...');
+          // Load folders (Notes will be loaded by the useEffect watching currentView)
           await loadFolders();
         }
       } else {
@@ -223,16 +224,16 @@ const App: React.FC = () => {
   };
 
   // Load notes from API
-  const loadNotes = useCallback(async () => {
+  const loadNotes = useCallback(async (includeDeleted: boolean = false) => {
     const isAuth = await api.isAuthenticated();
-    console.log('[loadNotes] Starting...', { isAuth, selectedNoteId });
+    console.log('[loadNotes] Starting...', { isAuth, selectedNoteId, includeDeleted });
 
     try {
       setNotesLoading(true);
       setNotesError(null);
 
       console.log('[loadNotes] Calling api.getNotes()...');
-      const response = await api.getNotes() as { success: boolean; data: ApiNote[] };
+      const response = await api.getNotes({ isDeleted: includeDeleted }) as { success: boolean; data: ApiNote[] };
 
       console.log('[loadNotes] API Response:', response);
       console.log('[loadNotes] Response.success:', response.success);
@@ -309,6 +310,13 @@ const App: React.FC = () => {
     }
   }, [selectedNoteId]);
 
+  // Load notes when view changes (e.g., to Trash)
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadNotes(currentView === 'trash');
+    }
+  }, [currentView, isAuthenticated, loadNotes]);
+
   // Load folders from API
   const loadFolders = useCallback(async () => {
     const isAuth = await api.isAuthenticated();
@@ -380,19 +388,15 @@ const App: React.FC = () => {
         console.warn('[handleLogin] Offline sync initialization failed, continuing without it:', syncError);
       }
 
-      console.log('[handleLogin] Loading notes and folders...');
-      // Load notes and folders
-      await loadNotes();
+      console.log('[handleLogin] Loading folders...');
+      // Load folders (Notes will be loaded by the useEffect)
       await loadFolders();
 
       console.log('[handleLogin] Login process complete');
       return { success: true };
     } catch (error) {
       console.error('[handleLogin] Error:', error);
-      return {
-        success: false,
-        error: (error as Error).message || 'Login failed'
-      };
+      throw error; // Throw so LoginPage can catch it
     }
   }, [loadNotes, loadFolders]);
 
@@ -489,7 +493,8 @@ const App: React.FC = () => {
           console.warn('Failed to remove folder from IndexedDB:', cacheError);
         }
         // Remove notes in this folder from local state
-        setNotes(prev => prev.filter(n => n.folder !== folders.find(f => f.id === id)?.name));
+        const deletedFolderName = folders.find(f => f.id === id)?.name;
+        setNotes(prev => prev.filter(n => n.folderId !== id && n.folder !== deletedFolderName));
         // Reload folders
         await loadFolders();
       }
@@ -522,16 +527,62 @@ const App: React.FC = () => {
     }
   }, [isAuthenticated, loadFolders]);
 
-  const handleAddNote = useCallback(async (type: NoteType = 'Markdown', folder: string = 'General') => {
+  // Handle template application
+  const handleTemplateApplied = useCallback(async (noteId: string) => {
+    console.log('[handleTemplateApplied] Template applied, note ID:', noteId);
+    
+    try {
+      // Reload notes to get the newly created note
+      await loadNotes();
+      
+      // Switch to editor view and select the note
+      setCurrentView('editor');
+      setSelectedNoteId(noteId);
+      
+      console.log('[handleTemplateApplied] Switched to editor view with note:', noteId);
+    } catch (error) {
+      console.error('[handleTemplateApplied] Error:', error);
+    }
+  }, [loadNotes]);
+
+  // Handle adding a note from template
+  const handleAddNoteFromTemplate = useCallback(async (templateId: string, folder?: string) => {
     if (!isAuthenticated) return;
 
-    console.log('[handleAddNote] Starting note creation:', { type, folder, currentNotesCount: notes.length });
+    console.log('[handleAddNoteFromTemplate] Creating note from template:', { templateId, folder });
 
     try {
-      // Find folderId from folder name
-      const targetFolder = folders.find(f => f.name === folder);
-      const folderId = targetFolder?.id;
+      const response = await api.applyTemplate(templateId, { 
+        folderId: folder ? undefined : undefined // API will handle folder mapping
+      }) as { success: boolean; data: any };
 
+      if (response.success && response.data) {
+        console.log('[handleAddNoteFromTemplate] Note created:', response.data);
+        
+        // Reload notes to get the newly created note
+        await loadNotes();
+        
+        // Switch to editor view and select the note
+        setCurrentView('editor');
+        setSelectedNoteId(response.data.id);
+        
+        console.log('[handleAddNoteFromTemplate] Switched to editor view with note:', response.data.id);
+      }
+    } catch (error) {
+      console.error('[handleAddNoteFromTemplate] Error:', error);
+      alert('Failed to create note from template');
+    }
+  }, [isAuthenticated, loadNotes]);
+
+  const handleAddNote = useCallback(async (type: NoteType = 'Markdown', folderId?: string) => {
+    if (!isAuthenticated) return;
+
+    const targetFolder = folderId ? folders.find(f => f.id === folderId) : undefined;
+    const folderName = targetFolder?.name || 'General';
+
+    console.log('[handleAddNote] Starting note creation:', { type, folderId, folderName, currentNotesCount: notes.length });
+
+    try {
       const response = await api.createNote({
         title: `New ${type} Note`,
         noteType: frontendTypeToBackendType(type) as any,
@@ -590,7 +641,8 @@ const App: React.FC = () => {
           updatedAt: new Date().toISOString(),
           createdAt: new Date().toISOString(),
           timestamp: Date.now(),
-          folder,
+          folder: folderName,
+          folderId,
           tags: [],
         };
 
@@ -605,6 +657,7 @@ const App: React.FC = () => {
             title: tempNote.title,
             noteType: frontendTypeToBackendType(type),
             content: tempNote.content,
+            folderId,
           });
         } catch (queueError) {
           console.warn('Failed to enqueue note creation:', queueError);
@@ -623,6 +676,7 @@ const App: React.FC = () => {
       const response = await api.updateNote(updatedNote.id, {
         title: updatedNote.title,
         content: updatedNote.content,
+        folderId: updatedNote.folderId,
         tags: updatedNote.tags,
       }) as { success: boolean; data: ApiNote };
 
@@ -661,6 +715,7 @@ const App: React.FC = () => {
           await offlineSync.enqueueRequest('PUT', `/api/notes/${updatedNote.id}`, {
             title: updatedNote.title,
             content: updatedNote.content,
+            folderId: updatedNote.folderId,
             tags: updatedNote.tags,
           });
         } catch (queueError) {
@@ -840,7 +895,7 @@ const App: React.FC = () => {
       case 'ai-dashboard':
         return <AIDashboard />;
       case 'templates':
-        return <TemplateGallery />;
+        return <TemplateGallery onTemplateApplied={handleTemplateApplied} />;
       case 'settings':
         return <Settings user={user} />;
       case 'editor':
@@ -856,6 +911,7 @@ const App: React.FC = () => {
               selectedNoteId={selectedNoteId}
               onSelectNote={setSelectedNoteId}
               onAddNote={handleAddNote}
+              onAddNoteFromTemplate={handleAddNoteFromTemplate}
               onAddFolder={handleAddFolder}
               onDeleteFolder={handleDeleteFolder}
               onUpdateFolder={handleUpdateFolder}
@@ -865,6 +921,11 @@ const App: React.FC = () => {
               width={leftPanelWidth}
               loading={notesLoading}
               error={notesError}
+              isTrashView={currentView === 'trash'}
+              onRestoreNote={async (id) => {
+                await api.restoreNote(id);
+                await loadNotes(currentView === 'trash');
+              }}
             />
             {/* Left Resizer */}
             <div
@@ -893,15 +954,25 @@ const App: React.FC = () => {
     };
 
     const labels = {
-      synced: 'Synced',
-      syncing: 'Syncing...',
-      offline: 'Offline',
-      error: 'Sync Error',
+      synced: t.noteList.cloudSynced || 'Synced',
+      syncing: language === 'en' ? 'Syncing...' : '同步中...',
+      offline: language === 'en' ? 'Offline' : '离线',
+      error: language === 'en' ? 'Sync Error' : '同步错误',
+    };
+
+    const descriptions = {
+      synced: language === 'en' ? 'All data is synced to cloud' : '所有数据已同步至云端',
+      syncing: language === 'en' ? 'Syncing data to server...' : '正在同步数据到服务器...',
+      offline: language === 'en' ? 'Working offline, data will sync when online' : '离线模式，数据将在上线后同步',
+      error: language === 'en' ? 'Error syncing data to server' : '同步数据到服务器时出错',
     };
 
     return (
-      <div className="flex items-center gap-2 text-xs text-text-secondary-light dark:text-text-secondary-dark">
-        <div className={`w-2 h-2 rounded-full ${colors[syncStatus]}`} />
+      <div 
+        className="flex items-center gap-2 text-[10px] text-text-secondary-light dark:text-text-secondary-dark cursor-help"
+        title={descriptions[syncStatus]}
+      >
+        <div className={`w-1.5 h-1.5 rounded-full ${colors[syncStatus]}`} />
         <span>{labels[syncStatus]}</span>
       </div>
     );
@@ -937,14 +1008,9 @@ const App: React.FC = () => {
           </>
         )}
 
-        {!aiPanelOpen && (currentView === 'editor' || currentView === 'tags') && (
-          <button
-            onClick={() => setAiPanelOpen(true)}
-            className="fixed bottom-6 right-6 size-12 bg-primary text-white rounded-full flex items-center justify-center shadow-xl hover:scale-110 transition-transform z-50"
-          >
-            <span className="material-symbols-outlined">auto_awesome</span>
-          </button>
-        )}
+        {/* Floating bottom-right AI toggle button removed.
+            Top editor button now exclusively controls showing/hiding the AI panel.
+            If you later want to re-enable this shortcut, restore the block here. */}
       </div>
     </div>
   );

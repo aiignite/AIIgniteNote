@@ -15,6 +15,27 @@ function generateVerificationCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+async function checkDatabaseConnection() {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
+  } catch (error) {
+    console.warn('Database connection failed:', error);
+    return false;
+  }
+}
+
+async function ensureDatabaseConnection() {
+  const isConnected = await checkDatabaseConnection();
+  if (!isConnected) {
+    throw new ApiErrorClass(
+      'DATABASE_UNAVAILABLE',
+      'Database is not configured. Please set up PostgreSQL database or use Docker.',
+      503
+    );
+  }
+}
+
 export class AuthService {
   /**
    * Register a new user
@@ -176,6 +197,16 @@ export class AuthService {
    * Login user
    */
   async login(credentials: LoginCredentials) {
+    // Check database connection first
+    const isDbConnected = await checkDatabaseConnection();
+    if (!isDbConnected) {
+      throw new ApiErrorClass(
+        'DATABASE_UNAVAILABLE',
+        'Database is not configured. Please set up PostgreSQL database or use Docker.',
+        503
+      );
+    }
+
     const normalizedEmail = normalizeEmail(credentials.email);
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
@@ -446,6 +477,44 @@ export class AuthService {
         models: ['local-model'],
       },
     };
+  }
+
+  /**
+   * Get user settings
+   */
+  async getUserSettings(userId: string) {
+    let settings = await prisma.userSettings.findUnique({
+      where: { userId },
+    });
+
+    // Create settings if not exists
+    if (!settings) {
+      settings = await prisma.userSettings.create({
+        data: {
+          userId,
+          aiProviderSettings: this.getDefaultAISettings(),
+        },
+      });
+    }
+
+    return settings;
+  }
+
+  /**
+   * Update user settings
+   */
+  async updateUserSettings(userId: string, data: any) {
+    const settings = await prisma.userSettings.upsert({
+      where: { userId },
+      create: {
+        userId,
+        ...data,
+        aiProviderSettings: this.getDefaultAISettings(),
+      },
+      update: data,
+    });
+
+    return settings;
   }
 }
 

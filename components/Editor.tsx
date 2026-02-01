@@ -326,12 +326,12 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
           {/* Save Status Indicator */}
           <div className={`flex items-center gap-1.5 text-xs transition-colors ${
             isSaving ? 'text-yellow-500' : 'text-green-500'
-          }`}>
-            <span className={`material-symbols-outlined text-[14px] ${isSaving ? 'animate-spin' : ''}`}>
+          }`} title={isSaving ? (t.editor?.saving || 'Saving...') : (t.editor?.saved || 'Saved')}>
+            <span className={`material-symbols-outlined text-[14px] ${isSaving ? 'animate-spin' : ''}`} aria-hidden="false">
               {isSaving ? 'autorenew' : 'check_circle'}
             </span>
-            <span className="hidden sm:inline">
-              {isSaving ? 'Saving...' : 'Saved'}
+            <span className="sr-only">
+              {isSaving ? (t.editor?.saving || 'Saving...') : (t.editor?.saved || 'Saved')}
             </span>
           </div>
 
@@ -365,14 +365,15 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
           <div className="relative" ref={tagMenuRef}>
             <button 
               onClick={() => setShowTagMenu(!showTagMenu)}
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`flex items-center gap-0 px-2 py-1 rounded-lg text-xs font-medium transition-all ${
                 showTagMenu 
                   ? 'text-primary bg-primary/10 ring-1 ring-primary/20' 
                   : 'text-gray-500 hover:text-primary hover:bg-gray-50 dark:hover:bg-gray-800 border border-transparent hover:border-gray-200 dark:hover:border-gray-700'
               }`}
+              title={t.editor.addTag}
             >
                <span className="material-symbols-outlined text-sm">label</span>
-               <span className="hidden sm:inline">{t.editor.addTag}</span>
+               <span className="sr-only">{t.editor.addTag}</span>
             </button>
 
             {showTagMenu && (
@@ -473,9 +474,7 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
             title={aiPanelOpen ? "Hide AI Assistant" : "Show AI Assistant"}
           >
             <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
-            <span className="text-xs font-medium hidden lg:inline">
-              {aiPanelOpen ? 'Hide AI' : 'AI Assistant'}
-            </span>
+            <span className="sr-only">{aiPanelOpen ? 'Hide AI' : 'AI Assistant'}</span>
           </button>
           
           <button className="text-gray-400 hover:text-primary transition-colors p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800">

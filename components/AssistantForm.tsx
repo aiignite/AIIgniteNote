@@ -84,6 +84,7 @@ export const AssistantForm: React.FC<AssistantFormProps> = ({ assistant, onSave,
     maxTokens: assistant?.maxTokens ?? 2048,
     enableMemory: assistant?.enableMemory ?? true,
     enableWebSearch: assistant?.enableWebSearch ?? false,
+    isDefault: assistant?.isDefault ?? false,
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -294,6 +295,16 @@ export const AssistantForm: React.FC<AssistantFormProps> = ({ assistant, onSave,
                   className="rounded text-primary focus:ring-primary"
                 />
                 <span className="text-sm text-gray-700 dark:text-gray-300">Enable Web Search</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.isDefault}
+                  onChange={(e) => setFormData({ ...formData, isDefault: e.target.checked })}
+                  className="rounded text-yellow-500 focus:ring-yellow-500"
+                />
+                <span className="text-sm text-gray-700 dark:text-gray-300">Set as Default Assistant</span>
               </label>
             </div>
           </div>

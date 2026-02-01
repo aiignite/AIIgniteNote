@@ -99,6 +99,8 @@ export interface NotesQueryParams {
   search?: string;
   folderId?: string;
   tagIds?: string[];
+  isFavorite?: boolean;
+  isDeleted?: boolean;
   sortBy?: 'createdAt' | 'updatedAt' | 'title';
   sortOrder?: 'asc' | 'desc';
 }
@@ -290,7 +292,7 @@ class APIClient {
       // In Docker/prod, use empty string (endpoints already have /api prefix)
       // In dev, use the backend URL directly
       const isDev = import.meta.env.DEV;
-      this.baseURL = isDev ? 'http://localhost:4000' : '';
+      this.baseURL = isDev ? 'http://localhost:3215' : '';
     }
     this.initPromise = this.loadTokens();
   }
@@ -543,6 +545,17 @@ class APIClient {
     });
   }
 
+  async uploadAvatar(file: File) {
+    const formData = new FormData();
+    formData.append('avatar', file);
+
+    return this.request('/api/users/avatar', {
+      method: 'POST',
+      body: formData,
+      headers: {}, // Let browser set Content-Type for FormData
+    });
+  }
+
   async deleteAccount() {
     return this.request('/api/users/profile', {
       method: 'DELETE',
@@ -578,6 +591,8 @@ class APIClient {
     if (params?.limit) queryParams.append('limit', params.limit.toString());
     if (params?.search) queryParams.append('search', params.search);
     if (params?.folderId) queryParams.append('folderId', params.folderId);
+    if (params?.isFavorite !== undefined) queryParams.append('isFavorite', params.isFavorite.toString());
+    if (params?.isDeleted !== undefined) queryParams.append('isDeleted', params.isDeleted.toString());
     if (params?.tagIds) params.tagIds.forEach(id => queryParams.append('tagIds', id));
     if (params?.sortBy) queryParams.append('sortBy', params.sortBy);
     if (params?.sortOrder) queryParams.append('sortOrder', params.sortOrder);
@@ -642,6 +657,12 @@ class APIClient {
   async deleteNote(id: string) {
     return this.request(`/api/notes/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  async restoreNote(id: string) {
+    return this.request(`/api/notes/${id}/restore`, {
+      method: 'POST',
     });
   }
 

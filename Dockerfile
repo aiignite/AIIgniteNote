@@ -29,6 +29,9 @@ RUN npm run build
 # Stage 2: Production
 FROM nginx:alpine
 
+# Use Aliyun Alpine mirror
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 

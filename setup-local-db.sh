@@ -134,7 +134,7 @@ cd backend
 # 安装依赖（如果需要）
 if [ ! -d "node_modules" ]; then
     echo "正在安装依赖..."
-    npm install
+    npm install --registry=https://registry.npmmirror.com
 fi
 
 # 生成 Prisma Client

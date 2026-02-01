@@ -81,7 +81,11 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path.startsWith('/auth/login') || req.path.startsWith('/auth/refresh'),
+  // Skip high-frequency note save traffic and auth endpoints to prevent 429 during typing
+  skip: (req) =>
+    req.path.startsWith('/auth/login') ||
+    req.path.startsWith('/auth/refresh') ||
+    req.path.startsWith('/notes'),
 });
 app.use('/api', limiter);
 

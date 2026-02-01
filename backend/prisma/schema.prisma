@@ -365,6 +365,7 @@ model AIModel {
   cost        String   @default("$")
   context     String   @default("128K")
   description String?
+  defaultTemplateId String? @map("default_template_id")
   userId      String?
   workspaceId String?
   createdAt   DateTime @default(now())
@@ -373,6 +374,7 @@ model AIModel {
   // Relations
   user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  defaultTemplate AITemplate? @relation("DefaultTemplate", fields: [defaultTemplateId], references: [id], onDelete: SetNull)
 
   @@index([provider])
   @@index([isPublic])
@@ -437,6 +439,7 @@ model AITemplate {
   // Relations
   user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  aiModels  AIModel[]    @relation("DefaultTemplate")
 
   @@index([userId])
   @@index([workspaceId])
@@ -466,7 +469,7 @@ model AIAttachment {
 // AI Assistant Tables (Custom Assistants)
 // ============================================================
 
-model AIAssistant {
+  model AIAssistant {
   id              String   @id @default(cuid())
   name            String
   description     String?  @db.Text
@@ -480,7 +483,8 @@ model AIAssistant {
   enableMemory    Boolean  @default(true) @map("enable_memory")
   enableWebSearch Boolean  @default(false) @map("enable_web_search")
   isSystem        Boolean  @default(false) @map("is_system")
-  userId          String   @map("user_id")
+  isDefault       Boolean  @default(false) @map("is_default")
+  userId          String?   @map("user_id")
   workspaceId     String?  @map("workspace_id")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")

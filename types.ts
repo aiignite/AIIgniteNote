@@ -57,9 +57,12 @@ export interface Note {
   updatedAt: string;
   createdAt: string;     // Added for sorting
   timestamp: number;     // Added for accurate sorting
-  folder: string;
+  folder: string;        // Legacy field for backward compatibility
+  folderId?: string;     // New field for folder ID reference
   tags: (string | { name: string; color: string })[]; // Support both for flexibility
   isFavorite?: boolean;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface ChatMessage {

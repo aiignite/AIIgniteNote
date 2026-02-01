@@ -5,6 +5,21 @@ import { indexedDB } from '../services/indexedDB';
 
 export type Language = 'en' | 'zh';
 
+const normalizeLanguage = (lang?: string): Language => {
+  if (!lang) return 'en';
+  const lower = lang.toLowerCase();
+  if (lower.startsWith('zh')) return 'zh';
+  return 'en';
+};
+
+const resolveLanguage = (lang?: string) => {
+  const language = normalizeLanguage(lang);
+  return {
+    language,
+    t: translations[language],
+  };
+};
+
 const translations = {
   en: {
     sidebar: {
@@ -48,6 +63,8 @@ const translations = {
       noNoteDesc: 'Select a note from the sidebar or create a new one.',
       untitled: 'Untitled Note',
       addTag: 'Add Tag',
+      saving: 'Saving...',
+      saved: 'Saved',
       suggested: 'Suggested',
       chars: 'chars'
     },
@@ -156,6 +173,8 @@ const translations = {
       noNoteDesc: '请从侧边栏选择一个笔记或创建一个新笔记。',
       untitled: '无标题笔记',
       addTag: '添加标签',
+      saving: '保存中...',
+      saved: '已保存',
       suggested: '建议',
       chars: '字符'
     },
@@ -232,20 +251,27 @@ interface LanguageState {
 }
 
 export const useLanguageStore = create<LanguageState>((set) => ({
-  language: 'en',
-  t: translations.en,
+  ...resolveLanguage('en'),
   setLanguage: (lang) => {
-    set({ language: lang, t: translations[lang] });
-    offlineSync.enqueueRequest('PUT', '/api/users/settings', { language: lang });
+    const { language, t } = resolveLanguage(lang);
+    set({ language, t });
+    offlineSync.enqueueRequest('PUT', '/api/users/settings', { language });
     indexedDB.getSettings().then(settings => {
-      indexedDB.cacheSettings({ ...settings, language: lang });
-    });
+      indexedDB.cacheSettings({ ...settings, language });
+    }).catch(err => console.error('Failed to update language settings in IndexedDB:', err));
   },
   initialize: async () => {
-    const settings = await indexedDB.getSettings();
-    if (settings && settings.language) {
-      const lang = settings.language as Language;
-      set({ language: lang, t: translations[lang] });
+    try {
+      const settings = await indexedDB.getSettings();
+      if (settings && settings.language) {
+        const { language, t } = resolveLanguage(settings.language);
+        set({ language, t });
+      } else {
+        set(resolveLanguage('en'));
+      }
+    } catch (error) {
+      console.error('Failed to initialize language store:', error);
+      set(resolveLanguage('en'));
     }
   }
 }));

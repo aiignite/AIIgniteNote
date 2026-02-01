@@ -41,6 +41,13 @@ router.put('/:id', authenticate, validate(updateNoteSchema), notesController.upd
 router.delete('/:id', authenticate, notesController.delete);
 
 /**
+ * @route   POST /api/notes/:id/restore
+ * @desc    Restore a soft-deleted note
+ * @access  Private
+ */
+router.post('/:id/restore', authenticate, notesController.restore);
+
+/**
  * @route   GET /api/notes/:id/versions
  * @desc    Get note version history
  * @access  Private

@@ -1,25 +1,17 @@
-import { PrismaClient } from '@prisma/client';
-import { hashPassword } from './src/utils/password';
+const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcryptjs');
 
 const prisma = new PrismaClient();
 
 async function createAdminUser() {
   try {
     const adminEmail = 'admin@aiignite.com';
-    const adminPassword = 'Admin12345';
+    const adminPassword = 'Admin123456';
 
-    const hashedPassword = await hashPassword(adminPassword);
+    const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
-    // 使用 upsert 确保用户存在且密码最新
-    const user = await prisma.user.upsert({
-      where: { email: adminEmail },
-      update: {
-        password: hashedPassword,
-        name: 'System Administrator',
-        isActive: true,
-        emailVerified: new Date(),
-      },
-      create: {
+    const user = await prisma.user.create({
+      data: {
         email: adminEmail,
         name: 'System Administrator',
         password: hashedPassword,
@@ -39,18 +31,17 @@ async function createAdminUser() {
       },
     });
 
-    console.log('✅ 管理员账户同步成功！');
+    console.log('✅ 管理员账户创建成功！');
     console.log('📧 邮箱:', user.email);
     console.log('👤 用户名:', user.name);
     console.log('🔑 密码:', adminPassword);
-    console.log('🔗 登录地址: http://localhost:3200');
+    console.log('🔗 登录地址: http://localhost:3210');
     console.log('');
     console.log('⚠️  安全提示：登录后请立即修改密码！');
 
-  } catch (error: any) {
+  } catch (error) {
     if (error.code === 'P2002') {
       console.error('❌ 错误：该邮箱已存在账户');
-      console.log('提示：如需重置密码，请运行: npm run reset-password');
     } else {
       console.error('❌ 创建账户失败:', error.message);
     }

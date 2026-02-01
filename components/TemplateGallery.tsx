@@ -6,7 +6,11 @@ import { indexedDB } from '../services/indexedDB';
 import { useLanguageStore } from '../store/languageStore';
 import TemplateForm from './TemplateForm';
 
-const TemplateGallery: React.FC = () => {
+interface TemplateGalleryProps {
+  onTemplateApplied?: (noteId: string) => void;
+}
+
+const TemplateGallery: React.FC<TemplateGalleryProps> = ({ onTemplateApplied }) => {
   const { t } = useLanguageStore();
 
   // State management
@@ -85,8 +89,11 @@ const TemplateGallery: React.FC = () => {
     try {
       const response = await api.applyTemplate(template.id, {}) as { success: boolean; data: any };
       if (response.success) {
-        // Trigger navigation to the new note
-        window.location.hash = `#note-${response.data.id}`;
+        console.log('[TemplateGallery] Template applied, note created:', response.data);
+        // Notify parent component to switch to editor and select the note
+        if (onTemplateApplied && response.data?.id) {
+          onTemplateApplied(response.data.id);
+        }
       }
     } catch (err: any) {
       console.error('Error applying template:', err);

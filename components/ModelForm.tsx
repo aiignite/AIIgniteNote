@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { api } from '../services/api';
 
 interface ModelFormProps {
   model?: any;
@@ -7,6 +8,8 @@ interface ModelFormProps {
 }
 
 export const ModelForm: React.FC<ModelFormProps> = ({ model, onSave, onClose }) => {
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [formData, setFormData] = useState({
     name: model?.name || '',
     modelId: model?.modelId || '',
@@ -19,7 +22,25 @@ export const ModelForm: React.FC<ModelFormProps> = ({ model, onSave, onClose }) 
     speed: model?.speed || 'Fast',
     cost: model?.cost || '$',
     context: model?.context || '128K',
+    defaultTemplateId: model?.defaultTemplateId || '',
   });
+
+  useEffect(() => {
+    const loadTemplates = async () => {
+      setLoadingTemplates(true);
+      try {
+        const response = await api.getTemplates() as any;
+        if (response.success) {
+          setTemplates(response.data);
+        }
+      } catch (error) {
+        console.error('Failed to load templates:', error);
+      } finally {
+        setLoadingTemplates(false);
+      }
+    };
+    loadTemplates();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -214,6 +235,28 @@ export const ModelForm: React.FC<ModelFormProps> = ({ model, onSave, onClose }) 
               <span>Popular</span>
               <span>Trending</span>
             </div>
+          </div>
+
+          {/* 默认模板选择 */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5 text-gray-700 dark:text-gray-300">
+              Default Template (Optional)
+            </label>
+            <select
+              value={formData.defaultTemplateId}
+              onChange={(e) => setFormData({ ...formData, defaultTemplateId: e.target.value })}
+              className="w-full px-3 py-2 bg-white dark:bg-[#1c2b33] border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+            >
+              <option value="">No Default Template</option>
+              {templates.map(template => (
+                <option key={template.id} value={template.id}>
+                  {template.name} ({template.category})
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-gray-400 mt-1 pl-1">
+              {loadingTemplates ? 'Loading templates...' : 'Link a template to this model for specific tasks.'}
+            </p>
           </div>
 
           {/* 描述 */}

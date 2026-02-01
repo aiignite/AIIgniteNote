@@ -40,7 +40,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout, 
   }, []);
 
   const navItems: { id: ViewState; icon: string; label: string; activeColor?: string }[] = [
-    { id: 'editor', icon: 'edit_note', label: t.sidebar.documents, activeColor: 'bg-primary' },
+    { id: 'editor', icon: 'edit_note', label: t.sidebar.documents },
     { id: 'templates', icon: 'extension', label: t.sidebar.templates },
     { id: 'ai-dashboard', icon: 'auto_awesome', label: t.sidebar.aiDashboard },
     { id: 'trash', icon: 'delete', label: t.sidebar.trash },

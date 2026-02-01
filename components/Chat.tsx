@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { socketService, ChatMessage as SocketMessage } from '../services/socket';
 import { useAuthStore } from '../store/authStore';
+import { useThemeStore } from '../store/themeStore';
 import { api, ChatRoom, ChatMessage, ChatFileItem, ChatUser, Note as ApiNote } from '../services/api';
 
 type TabType = 'messages' | 'contacts';
@@ -64,6 +65,9 @@ export const Chat: React.FC = () => {
   const [pinnedLoading, setPinnedLoading] = useState(false);
   
   const { user } = useAuthStore();
+  const { getTheme } = useThemeStore();
+  const theme = getTheme();
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const API_BASE_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3215`;
@@ -865,7 +869,7 @@ export const Chat: React.FC = () => {
       >
         <button
           onMouseDown={handleMouseDown}
-          className="relative w-14 h-14 bg-gradient-to-br from-green-400 to-green-600 text-white rounded-full shadow-lg hover:shadow-xl hover:scale-110 transition-all duration-200 flex items-center justify-center group"
+          className="relative w-12 h-12 bg-gradient-to-br from-green-400 to-green-600 text-white rounded-full shadow-lg hover:shadow-xl hover:scale-110 transition-all duration-200 flex items-center justify-center group"
           title="即时通讯 (可拖动)"
         >
           {unreadCount > 0 && (
@@ -873,7 +877,7 @@ export const Chat: React.FC = () => {
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
           {unreadCount > 0 && (
@@ -948,106 +952,100 @@ export const Chat: React.FC = () => {
           {/* Main Content */}
           {!currentRoom ? (
             <>
-              {/* Tab Nav */}
-              <div className="flex border-b border-gray-200 bg-gray-50">
-                <button
-                  onClick={() => setActiveTab('messages')}
-                  className={`flex-1 py-3 px-4 text-sm font-medium transition-colors ${
-                    activeTab === 'messages' ? 'text-green-600 border-b-2 border-green-500 bg-white' : 'text-gray-600'
-                  }`}
-                >
-                  消息
-                </button>
-                <button
-                  onClick={() => setActiveTab('contacts')}
-                  className={`flex-1 py-3 px-4 text-sm font-medium transition-colors ${
-                    activeTab === 'contacts' ? 'text-green-600 border-b-2 border-green-500 bg-white' : 'text-gray-600'
-                  }`}
-                >
-                  联系人
-                </button>
-              </div>
+              {/* 左侧窄栏：联系人/会话 图标列表 + 右侧消息/空状态区 */}
+              <div className="flex-1 overflow-hidden bg-white">
+                <div className="flex h-full">
+                  {/* 左侧图标列（宽度 56px） */}
+                  <div className="w-14 bg-white border-r flex flex-col items-center py-2 space-y-3 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200">
+                    {/* 创建群聊按钮（小图标） */}
+                    <div
+                      onClick={openGroupModal}
+                      title="创建群聊"
+                      className="w-10 h-10 rounded-full bg-gradient-to-br from-green-400 to-green-500 flex items-center justify-center text-white cursor-pointer hover:scale-105 transition-transform"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M8 9a3 3 0 100-6 3 3 0 000 6zM14 7a2 2 0 11-4 0 2 2 0 014 0zM3 13a4 4 0 018 0v1H3v-1z" />
+                      </svg>
+                    </div>
 
-              {activeTab === 'messages' ? (
-                  <div className="flex-1 overflow-y-auto bg-white">
-                      {rooms.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center h-full text-gray-400 p-8">
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                              </svg>
-                              <p className="text-sm mb-4">暂无聊天记录</p>
-                              <button
-                                  onClick={() => setActiveTab('contacts')}
-                                  className="bg-gradient-to-r from-green-400 to-green-500 text-white px-6 py-2 rounded-md hover:from-green-500 hover:to-green-600 transition-all duration-200 font-medium text-sm"
-                              >
-                                  选择联系人开始聊天
-                              </button>
-                          </div>
-                      ) : (
-                          rooms.map(room => {
-                              const otherMember = room.members.find(m => m.userId !== user?.id);
-                              const name = room.type === 'DIRECT' ? otherMember?.user.name : room.name;
-                              return (
-                                  <div key={room.id} onClick={() => setCurrentRoom(room)} className="p-3 border-b hover:bg-gray-50 cursor-pointer flex items-center space-x-3">
-                                      <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white">
-                                          {name?.charAt(0).toUpperCase()}
-                                      </div>
-                                      <div>
-                                          <div className="font-medium text-sm text-gray-800">{name}</div>
-                                          <div className="text-xs text-gray-500">点击进入聊天</div>
-                                      </div>
-                                  {room.unreadCount && room.unreadCount > 0 && (
-                                  <div className="ml-auto text-xs bg-red-500 text-white rounded-full px-2 py-0.5">
-                                    {room.unreadCount > 99 ? '99+' : room.unreadCount}
-                                  </div>
-                                  )}
-                                  </div>
-                              );
-                          })
-                      )}
-                  </div>
-              ) : (
-                  <div className="flex-1 overflow-y-auto bg-white">
-                      <div className="p-3 border-b bg-gray-50">
-                        <button
-                          onClick={openGroupModal}
-                          className="w-full text-sm bg-gradient-to-r from-green-400 to-green-500 text-white px-4 py-2 rounded-md hover:from-green-500 hover:to-green-600 transition-all"
+                    <div className="w-full border-t"></div>
+
+                    {/* 最近会话（rooms） */}
+                    {rooms.map(room => {
+                      const otherMember = room.members.find(m => m.userId !== user?.id);
+                      const name = room.type === 'DIRECT' ? otherMember?.user.name : room.name || '群聊';
+                      const label = name || 'Chat';
+                      return (
+                        <div
+                          key={room.id}
+                          title={label}
+                          onClick={() => setCurrentRoom(room)}
+                          className="relative w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white cursor-pointer hover:scale-105 transition-transform"
                         >
-                          创建群聊
-                        </button>
-                      </div>
-                      {user && (
-                          <div onClick={handleSelfChat} className="p-4 border-b hover:bg-green-50 cursor-pointer flex items-center space-x-3 bg-gradient-to-r from-green-50 to-blue-50">
-                              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-blue-500 flex items-center justify-center text-white">
-                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 0L11 8m0 0l3 3" />
-                                  </svg>
-                              </div>
-                              <div>
-                                  <div className="font-medium text-sm text-gray-800">📝 自记笔记</div>
-                                  <div className="text-xs text-gray-500">用于记录笔记和灵感</div>
-                              </div>
-                          </div>
-                      )}
-                      
-                        {chatUsers
-                        .filter(u => u.id !== user?.id)
-                        .map((u) => {
-                          const isOnline = onlineUsers.some((ou: any) => ou.userId === u.id);
-                          return (
-                          <div key={u.id} onClick={() => handleStartChat(u.id)} className="p-3 border-b hover:bg-gray-50 cursor-pointer flex items-center space-x-3">
-                            <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-white">
-                              {(u.name || u.email || 'U').charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <div className="font-medium text-sm text-gray-800">{u.name || u.email}</div>
-                              <div className={`text-xs ${isOnline ? 'text-green-500' : 'text-gray-400'}`}>{isOnline ? '在线' : '离线'}</div>
-                            </div>
-                          </div>
-                          );
-                        })}
+                          {label.charAt(0).toUpperCase()}
+                          {room.unreadCount && room.unreadCount > 0 && (
+                            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                              {room.unreadCount > 99 ? '•' : room.unreadCount}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <div className="w-full border-t"></div>
+
+                    {/* 联系人（chatUsers） */}
+                    {chatUsers.filter(u => u.id !== user?.id).map(u => {
+                      const isOnline = onlineUsers.some((ou: any) => ou.userId === u.id);
+                      const display = (u.name || u.email || 'U').charAt(0).toUpperCase();
+                      return (
+                        <div
+                          key={u.id}
+                          title={u.name || u.email}
+                          onClick={() => handleStartChat(u.id)}
+                          className="relative w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-white cursor-pointer hover:scale-105 transition-transform"
+                        >
+                          {display}
+                          {isOnline && (
+                            <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-green-400 border-2 border-white rounded-full"></span>
+                          )}
+                        </div>
+                      );
+                    })}
+
                   </div>
-              )}
+
+                  {/* 右侧：消息列表或空状态（保持之前 messages 的显示逻辑） */}
+                  <div className="flex-1 overflow-y-auto bg-white">
+                    {rooms.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-gray-400 p-8">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                        <p className="text-sm mb-4">暂无聊天记录</p>
+                        <button onClick={openGroupModal} className="bg-gradient-to-r from-green-400 to-green-500 text-white px-6 py-2 rounded-md hover:from-green-500 hover:to-green-600 transition-all duration-200 font-medium text-sm">创建群聊</button>
+                      </div>
+                    ) : (
+                      rooms.map(room => {
+                        const otherMember = room.members.find(m => m.userId !== user?.id);
+                        const name = room.type === 'DIRECT' ? otherMember?.user.name : room.name;
+                        return (
+                          <div key={room.id} onClick={() => setCurrentRoom(room)} className="p-3 border-b hover:bg-gray-50 cursor-pointer flex items-center space-x-3">
+                            <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white">{name?.charAt(0).toUpperCase()}</div>
+                            <div>
+                              <div className="font-medium text-sm text-gray-800">{name}</div>
+                              <div className="text-xs text-gray-500">点击进入聊天</div>
+                            </div>
+                            {room.unreadCount && room.unreadCount > 0 && (
+                              <div className="ml-auto text-xs bg-red-500 text-white rounded-full px-2 py-0.5">{room.unreadCount > 99 ? '99+' : room.unreadCount}</div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
             </>
           ) : (
              /* Chat Room View */
@@ -1244,7 +1242,7 @@ export const Chat: React.FC = () => {
                      className="p-2 hover:bg-gray-100 rounded transition-colors relative"
                      title="表情"
                    >
-                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" style={{ color: theme.hex }} viewBox="0 0 20 20" fill="currentColor">
                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 100-2 1 1 0 000 2zm7-1a1 1 0 11-2 0 1 1 0 012 0zm-.464 5.535a1 1 0 10-1.415-1.414 3 3 0 01-4.242 0 1 1 0 00-1.415 1.414 5 5 0 007.072 0z" clipRule="evenodd" />
                      </svg>
                    </button>
@@ -1292,7 +1290,7 @@ export const Chat: React.FC = () => {
                      className="p-2 hover:bg-gray-100 rounded transition-colors"
                      title="发送文件"
                    >
-                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" style={{ color: theme.hex }} viewBox="0 0 20 20" fill="currentColor">
                        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
                      </svg>
                    </button>
@@ -1303,7 +1301,7 @@ export const Chat: React.FC = () => {
                      className="p-2 hover:bg-gray-100 rounded transition-colors"
                      title="截图"
                    >
-                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" style={{ color: theme.hex }} viewBox="0 0 20 20" fill="currentColor">
                        <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
                      </svg>
                    </button>
@@ -1314,7 +1312,7 @@ export const Chat: React.FC = () => {
                       className="p-2 hover:bg-gray-100 rounded transition-colors"
                       title="聊天记录"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" style={{ color: theme.hex }} viewBox="0 0 20 20" fill="currentColor">
                         <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
                         <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
                       </svg>
@@ -1326,7 +1324,7 @@ export const Chat: React.FC = () => {
                       className="p-2 hover:bg-gray-100 rounded transition-colors"
                       title="文件管理"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" style={{ color: theme.hex }} viewBox="0 0 20 20" fill="currentColor">
                         <path d="M2 6a2 2 0 012-2h5l2 2h7a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
                       </svg>
                     </button>
@@ -1337,7 +1335,7 @@ export const Chat: React.FC = () => {
                       className="p-2 hover:bg-gray-100 rounded transition-colors"
                       title="保存到笔记"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" style={{ color: theme.hex }} viewBox="0 0 20 20" fill="currentColor">
                         <path d="M4 4a2 2 0 012-2h4.586a1 1 0 01.707.293l.707.707a1 1 0 01.293.707V8a1 1 0 01-1 1v8a1 1 0 001 1h5a1 1 0 001-1V8a1 1 0 00-1-1V5a1 1 0 00-.293-.707l-.707-.707A1 1 0 009.586 4H6zm7 1a1 1 0 110 2v5a1 1 0 110-2V5zM4 2a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V4a2 2 0 00-2-2H4zm8 5a1 1 0 110 2v3a1 1 0 110-2V7z" />
                       </svg>
                     </button>

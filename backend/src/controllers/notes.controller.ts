@@ -47,6 +47,7 @@ const listNotesSchema = z.object({
     folderId: z.string().optional(),
     workspaceId: z.string().optional(),
     isFavorite: z.enum(['true', 'false']).optional(),
+    isDeleted: z.enum(['true', 'false']).optional(),
     search: z.string().optional(),
     sortBy: z.enum(['createdAt', 'updatedAt', 'title']).optional(),
     sortOrder: z.enum(['asc', 'desc']).optional(),
@@ -101,7 +102,8 @@ export class NotesController {
         limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
         folderId: req.query.folderId as string | undefined,
         workspaceId: req.query.workspaceId as string | undefined,
-        isFavorite: req.query.isFavorite === 'true',
+        isFavorite: req.query.isFavorite === 'true' ? true : req.query.isFavorite === 'false' ? false : undefined,
+        isDeleted: req.query.isDeleted === 'true' ? true : req.query.isDeleted === 'false' ? false : undefined,
         search: req.query.search as string | undefined,
         sortBy: req.query.sortBy as any,
         sortOrder: req.query.sortOrder as any,
@@ -190,7 +192,7 @@ export class NotesController {
 
   /**
    * DELETE /api/notes/:id
-   * Delete note (soft delete)
+   * Delete note (soft delete or permanent delete)
    */
   delete = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -199,8 +201,8 @@ export class NotesController {
         return;
       }
 
-      await notesService.delete(req.userId, String(req.params.id));
-      success(res, { success: true });
+      const result = await notesService.delete(req.userId, String(req.params.id));
+      success(res, result);
     } catch (err) {
       if (err instanceof Error) {
         const apiErr = err as any;
@@ -212,6 +214,34 @@ export class NotesController {
         );
       } else {
         error(res, 'NOTE_DELETE_FAILED', 'Failed to delete note', 500);
+      }
+    }
+  };
+
+  /**
+   * POST /api/notes/:id/restore
+   * Restore note
+   */
+  restore = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.userId) {
+        error(res, 'UNAUTHORIZED', 'Authentication required', 401);
+        return;
+      }
+
+      const note = await notesService.restore(req.userId, String(req.params.id));
+      success(res, note);
+    } catch (err) {
+      if (err instanceof Error) {
+        const apiErr = err as any;
+        error(
+          res,
+          apiErr.code || 'NOTE_RESTORE_FAILED',
+          apiErr.message || 'Failed to restore note',
+          apiErr.statusCode || 500
+        );
+      } else {
+        error(res, 'NOTE_RESTORE_FAILED', 'Failed to restore note', 500);
       }
     }
   };

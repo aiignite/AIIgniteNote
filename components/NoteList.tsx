@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Note, NoteType } from '../types';
 import { useLanguageStore } from '../store/languageStore';
 import { Folder } from '../services/api';
@@ -9,7 +9,7 @@ interface NoteListProps {
   folders?: Folder[];
   selectedNoteId: string | null;
   onSelectNote: (id: string) => void;
-  onAddNote: (type: NoteType, folder?: string) => void;
+  onAddNote: (type: NoteType, folderId?: string) => void;
   onAddFolder?: (name: string, parentId?: string) => void;
   onDeleteFolder?: (id: string) => void;
   onUpdateFolder?: (id: string, name: string) => void;
@@ -19,6 +19,8 @@ interface NoteListProps {
   width?: number;
   loading?: boolean;
   error?: string | null;
+  isTrashView?: boolean;
+  onRestoreNote?: (id: string) => void;
 }
 
 type SortMode = 'updatedAt' | 'createdAt' | 'title';
@@ -26,7 +28,7 @@ type SortOrder = 'asc' | 'desc';
 
 interface ModalConfig {
   isOpen: boolean;
-  type: 'input' | 'confirm';
+  type: 'input' | 'confirm' | 'folder-tree';
   title: string;
   message?: string;
   placeholder?: string;
@@ -34,9 +36,15 @@ interface ModalConfig {
   confirmLabel?: string;
   confirmColor?: string; // e.g. 'bg-primary' or 'bg-red-500'
   onConfirm: (value: string) => void;
+  targetNoteId?: string; // For folder tree modal
 }
 
-const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId, onSelectNote, onAddNote, onAddFolder, onDeleteFolder, onUpdateFolder, onDeleteNote, onUpdateNote, onToggleFavorite, width, loading = false, error = null }) => {
+interface FolderTreeNode extends Folder {
+  children: FolderTreeNode[];
+  level: number;
+}
+
+const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId, onSelectNote, onAddNote, onAddFolder, onDeleteFolder, onUpdateFolder, onDeleteNote, onUpdateNote, onToggleFavorite, width, loading = false, error = null, isTrashView = false, onRestoreNote }) => {
   // Default viewMode changed to 'list' as requested
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -53,7 +61,22 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
   const { t } = useLanguageStore();
 
   // Folder State
-  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const folderMap = useMemo(() => new Map((folders || []).map(folder => [folder.id, folder])), [folders]);
+  const selectedNote = useMemo(() => notes.find(n => n.id === selectedNoteId) || null, [notes, selectedNoteId]);
+  const currentFolderName = currentFolderId ? (folderMap.get(currentFolderId)?.name || '') : '';
+
+  const matchNoteToFolder = useCallback((note: Note, folderId: string) => {
+    if (!folderId) return false;
+    if (note.folderId) return note.folderId === folderId;
+    const folder = folderMap.get(folderId);
+    return folder ? note.folder === folder.name : false;
+  }, [folderMap]);
+  
+  // Drag and Drop State
+  const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
 
   // Modal State
   const [modalConfig, setModalConfig] = useState<ModalConfig | null>(null);
@@ -117,12 +140,15 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
         setModalConfig({
           isOpen: true,
           type: 'confirm',
-          title: t.noteList.deleteTitle,
-          message: t.noteList.deleteMessage,
-          confirmLabel: t.noteList.confirmDelete,
+          title: isTrashView ? (t.language === 'zh' ? '永久删除' : 'Permanent Delete') : t.noteList.deleteTitle,
+          message: isTrashView ? (t.language === 'zh' ? '确定要从回收站永久删除这个笔记吗？此操作无法恢复。' : 'Are you sure you want to permanently delete this note? This action cannot be undone.') : t.noteList.deleteMessage,
+          confirmLabel: isTrashView ? (t.language === 'zh' ? '永久删除' : 'Delete Permanently') : t.noteList.confirmDelete,
           confirmColor: 'bg-red-500 hover:bg-red-600',
           onConfirm: () => onDeleteNote(note.id)
         });
+        break;
+      case 'restore':
+        if (onRestoreNote) onRestoreNote(note.id);
         break;
       case 'favorite':
         if (onToggleFavorite) onToggleFavorite(note.id);
@@ -148,30 +174,75 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
         });
         break;
       case 'folder':
-        setModalInputValue(note.folder || '');
+        setModalInputValue('');
         setModalConfig({
           isOpen: true,
-          type: 'input',
+          type: 'folder-tree',
           title: t.noteList.moveTitle,
-          placeholder: t.noteList.movePlaceholder,
-          initialValue: note.folder || '',
           confirmLabel: t.noteList.moveBtn,
-          onConfirm: (val) => {
-             // Allow empty string to move to root/General
-             onUpdateNote({ ...note, folder: val.trim() });
+          targetNoteId: note.id,
+          onConfirm: (folderId) => {
+             const folder = folderId ? folders.find(f => f.id === folderId) : null;
+             onUpdateNote({
+               ...note,
+               folder: folder ? folder.name : '',
+               folderId: folderId || undefined
+             });
           }
         });
         break;
     }
   };
 
+  // Build folder tree from flat folder list
+  const buildFolderTree = (folders: Folder[]): FolderTreeNode[] => {
+    const folderMap = new Map<string, FolderTreeNode>();
+    
+    // Initialize all folders
+    folders.forEach(folder => {
+      folderMap.set(folder.id, {
+        ...folder,
+        children: [],
+        level: 0
+      });
+    });
+    
+    // Build parent-child relationships
+    const rootFolders: FolderTreeNode[] = [];
+    folderMap.forEach(folder => {
+      if (folder.parentId) {
+        const parent = folderMap.get(folder.parentId);
+        if (parent) {
+          folder.level = parent.level + 1;
+          parent.children.push(folder);
+        } else {
+          rootFolders.push(folder);
+        }
+      } else {
+        rootFolders.push(folder);
+      }
+    });
+    
+    // Sort folders alphabetically
+    const sortFolders = (folders: FolderTreeNode[]) => {
+      folders.sort((a, b) => a.name.localeCompare(b.name));
+      folders.forEach(f => sortFolders(f.children));
+    };
+    sortFolders(rootFolders);
+    
+    return rootFolders;
+  };
+
   // Logic to process items based on currentFolder
   const { displayItems } = useMemo(() => {
     let items: (Note | { id: string; isFolder: true; name: string; date: string; noteCount?: number })[] = [];
 
-    if (currentFolder === null) {
-      // Root View: Show Folders + Notes in 'General' (or root)
-      // Use actual folders from API
+    const isRootNote = (note: Note) => {
+      const folderName = note.folder || '';
+      return (!note.folderId && (!folderName || folderName === 'General'));
+    };
+
+    if (currentFolderId === null) {
       const folderItems = folders.map(folder => ({
         id: `folder-${folder.id}`,
         isFolder: true as const,
@@ -180,8 +251,13 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
         noteCount: folder.noteCount || 0
       }));
 
-      // Also include legacy folders from notes (for backward compatibility)
-      const legacyFolderNames = Array.from(new Set(notes.map(n => n.folder).filter(f => f !== 'General' && f && !folders.some(af => af.name === f)))).sort();
+      const legacyFolderNames = Array.from(new Set(
+        notes
+          .filter(n => !n.folderId)
+          .map(n => n.folder)
+          .filter(f => f !== 'General' && f && !folders.some(af => af.name === f))
+      )).sort();
+
       const legacyFolderItems = legacyFolderNames.map(folderName => {
         const folderNotes = notes.filter(n => n.folder === folderName);
         const latestNote = folderNotes.sort((a,b) => b.timestamp - a.timestamp)[0];
@@ -193,15 +269,15 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
         };
       });
 
-      const rootNotes = notes.filter(n => !n.folder || n.folder === 'General').sort((a, b) => b.timestamp - a.timestamp);
+      const rootNotes = notes
+        .filter(isRootNote)
+        .sort((a, b) => b.timestamp - a.timestamp);
+
       items = [...folderItems, ...legacyFolderItems, ...rootNotes];
     } else {
-      // Folder View: Show only notes in this folder
-      items = notes
-        .filter(n => n.folder === currentFolder);
+      items = notes.filter(n => matchNoteToFolder(n, currentFolderId));
     }
 
-    // Filter by favorites if active
     if (showFavoritesOnly) {
       items = items.filter(item => {
         if ('isFolder' in item && item.isFolder) return false;
@@ -209,21 +285,17 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
       });
     }
 
-    // Global sorting logic for notes (folders always come first in root, but notes inside folders or root are sorted)
     items = items.sort((a, b) => {
       const isAFolder = 'isFolder' in a && a.isFolder;
       const isBFolder = 'isFolder' in b && b.isFolder;
 
-      // Always keep folders at the top if they are mixed
       if (isAFolder && !isBFolder) return -1;
       if (!isAFolder && isBFolder) return 1;
       
       if (isAFolder && isBFolder) {
-        // Sort folders by name always
         return a.name.localeCompare(b.name);
       }
 
-      // Both are notes, apply sortMode and sortOrder
       const noteA = a as Note;
       const noteB = b as Note;
       
@@ -239,16 +311,12 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
       return sortOrder === 'desc' ? -comparison : comparison;
     });
 
-    // Search filtering
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      const filteredItems = items.filter(item => {
-        // Check if item is a folder by checking for 'isFolder' property
+      items = items.filter(item => {
         if ('isFolder' in item && item.isFolder) {
-          // Search folder names
           return item.name.toLowerCase().includes(query);
         } else {
-          // Search note titles and content
           const note = item as Note;
           return (
             note.title.toLowerCase().includes(query) ||
@@ -256,11 +324,10 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
           );
         }
       });
-      items = filteredItems;
     }
 
     return { displayItems: items };
-  }, [notes, folders, currentFolder, sortMode, sortOrder, searchQuery, showFavoritesOnly]);
+  }, [notes, folders, currentFolderId, sortMode, sortOrder, searchQuery, showFavoritesOnly, matchNoteToFolder]);
 
   const noteTypes: { type: NoteType; icon: string; color: string }[] = [
     { type: 'Markdown', icon: 'markdown', color: 'text-blue-500' },
@@ -277,9 +344,19 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
     }
   };
 
+  const resolveTargetFolderId = (): string | null => {
+    if (currentFolderId) return currentFolderId;
+    if (selectedNote?.folderId) return selectedNote.folderId;
+    if (selectedNote?.folder) {
+      const matchedFolder = folders.find(f => f.name === selectedNote.folder);
+      if (matchedFolder) return matchedFolder.id;
+    }
+    return null;
+  };
+
   const handleAddNoteClick = (type: NoteType) => {
-    // Add to current folder if selected, otherwise default (which App handles as General)
-    onAddNote(type, currentFolder || undefined);
+    const targetFolderId = resolveTargetFolderId();
+    onAddNote(type, targetFolderId || undefined);
     setShowAddMenu(false);
   };
 
@@ -296,18 +373,213 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
             if (folderName && folderName.trim()) {
                 if (onAddFolder) {
                     // Call the proper folder creation API
-                    onAddFolder(folderName.trim(), currentFolder || undefined);
+                onAddFolder(folderName.trim(), currentFolderId || undefined);
                 } else {
                     // Fallback to old behavior if onAddFolder not provided
-                    const newFolderPath = currentFolder
-                        ? `${currentFolder}/${folderName.trim()}`
-                        : folderName.trim();
-                    onAddNote('Markdown', newFolderPath);
+                onAddNote('Markdown', currentFolderId || undefined);
                 }
             }
         }
     });
     setShowAddMenu(false);
+  };
+
+  // Toggle folder expansion
+  const toggleFolder = (folderId: string) => {
+    setExpandedFolders(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(folderId)) {
+        newSet.delete(folderId);
+      } else {
+        newSet.add(folderId);
+      }
+      return newSet;
+    });
+  };
+
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, noteId: string) => {
+    setDraggedNoteId(noteId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, folderId: string | null) => {
+    if (draggedNoteId) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setDragOverFolderId(folderId);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverFolderId(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, folderId: string | null) => {
+    e.preventDefault();
+    if (draggedNoteId) {
+      const note = notes.find(n => n.id === draggedNoteId);
+      if (note) {
+        const folder = folderId ? folders.find(f => f.id === folderId) : null;
+        onUpdateNote({
+          ...note,
+          folder: folder ? folder.name : '',
+          folderId: folderId || undefined
+        });
+      }
+    }
+    setDraggedNoteId(null);
+    setDragOverFolderId(null);
+  };
+
+  // Render folder recursively with tree structure
+  const renderFolderTree = (folder: FolderTreeNode): React.ReactNode => {
+    const isExpanded = expandedFolders.has(folder.id);
+    const hasChildren = folder.children && folder.children.length > 0;
+    const paddingLeft = folder.level * 16 + 12;
+    const isDragOver = dragOverFolderId === folder.id;
+    
+    return (
+      <div key={folder.id} className="mb-0.5">
+        {/* Folder Header */}
+        <div
+          onDragOver={(e) => handleDragOver(e, folder.id)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, folder.id)}
+          className={`group relative transition-all cursor-pointer rounded-lg flex items-center gap-2 px-3 py-2.5 ${
+            isDragOver 
+              ? 'bg-primary/10 border-2 border-primary border-dashed' 
+              : 'hover:bg-white dark:hover:bg-gray-800/30'
+          }`}
+          style={{ paddingLeft: `${paddingLeft}px` }}
+        >
+          {/* Expand/Collapse Button */}
+          {hasChildren && (
+            <button
+              onClick={() => toggleFolder(folder.id)}
+              className="shrink-0 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            >
+              <span className="material-symbols-outlined text-sm text-gray-400">
+                {isExpanded ? 'expand_more' : 'chevron_right'}
+              </span>
+            </button>
+          )}
+          {!hasChildren && <div className="w-5" />}
+          
+          {/* Folder Icon and Name */}
+          <div 
+            onClick={() => setCurrentFolderId(folder.id)}
+            className="flex-1 flex items-center gap-2 min-w-0"
+          >
+            <span className="material-symbols-outlined text-xl text-amber-400 shrink-0">
+              {isExpanded ? 'folder_open' : 'folder'}
+            </span>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-medium text-sm text-gray-800 dark:text-gray-200 truncate">
+                {folder.name}
+              </h3>
+            </div>
+          </div>
+          
+          {/* Folder Actions */}
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setModalInputValue('');
+                setModalConfig({
+                  isOpen: true,
+                  type: 'input',
+                  title: 'New Subfolder',
+                  placeholder: 'Folder name',
+                  confirmLabel: 'Create',
+                  onConfirm: (name) => {
+                    if (name.trim() && onAddFolder) {
+                      onAddFolder(name.trim(), folder.id);
+                    }
+                  }
+                });
+              }}
+              className="p-1 text-gray-400 hover:text-primary transition-colors"
+              title="Add subfolder"
+            >
+              <span className="material-symbols-outlined text-sm">create_new_folder</span>
+            </button>
+            {onUpdateFolder && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setModalInputValue(folder.name);
+                  setModalConfig({
+                    isOpen: true,
+                    type: 'input',
+                    title: 'Rename Folder',
+                    placeholder: 'New name',
+                    initialValue: folder.name,
+                    confirmLabel: 'Rename',
+                    onConfirm: (name) => {
+                      if (name.trim() && name !== folder.name) {
+                        onUpdateFolder(folder.id, name.trim());
+                      }
+                    }
+                  });
+                }}
+                className="p-1 text-gray-400 hover:text-primary transition-colors"
+                title="Rename folder"
+              >
+                <span className="material-symbols-outlined text-sm">edit</span>
+              </button>
+            )}
+            {onDeleteFolder && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setModalConfig({
+                    isOpen: true,
+                    type: 'confirm',
+                    title: 'Delete Folder',
+                    message: `Delete "${folder.name}" and all its contents?`,
+                    confirmLabel: 'Delete',
+                    confirmColor: 'bg-red-500',
+                    onConfirm: () => onDeleteFolder(folder.id)
+                  });
+                }}
+                className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                title="Delete folder"
+              >
+                <span className="material-symbols-outlined text-sm">delete</span>
+              </button>
+            )}
+          </div>
+        </div>
+        
+        {/* Child Folders */}
+        {isExpanded && hasChildren && (
+          <div className="mt-0.5">
+            {folder.children.map(child => renderFolderTree(child))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render folder tree picker recursively
+  const renderFolderPicker = (folder: FolderTreeNode, onSelect: (folderId: string) => void): React.ReactNode => {
+    const paddingLeft = folder.level * 16 + 12;
+    
+    return (
+      <div key={folder.id}>
+        <button
+          onClick={() => onSelect(folder.id)}
+          className="w-full text-left px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
+          style={{ paddingLeft: `${paddingLeft}px` }}
+        >
+          <span className="material-symbols-outlined text-sm text-amber-400">folder</span>
+          <span className="text-sm">{folder.name}</span>
+        </button>
+        {folder.children && folder.children.map(child => renderFolderPicker(child, onSelect))}
+      </div>
+    );
   };
 
   return (
@@ -318,58 +590,60 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
       <div className="p-4 border-b border-gray-200 dark:border-gray-800 z-20 relative">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            {currentFolder && (
+            {currentFolderId && (
               <button 
-                onClick={() => setCurrentFolder(null)}
+                onClick={() => setCurrentFolderId(null)}
                 className="p-1 -ml-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors"
               >
                 <span className="material-symbols-outlined">chevron_left</span>
               </button>
             )}
             <h2 className="text-lg font-bold truncate max-w-[180px]">
-              {currentFolder ? currentFolder : 'PLMS'}
+              {currentFolderId ? (currentFolderName || 'PLMS') : 'PLMS'}
             </h2>
           </div>
           
           {/* Add Note Dropdown */}
-          <div className="relative" ref={addMenuRef} onMouseEnter={() => setShowAddMenu(true)} onMouseLeave={() => setShowAddMenu(false)}>
-            <button 
-              className="bg-primary text-white p-1.5 rounded-lg flex items-center justify-center hover:bg-primary/90 transition-all shadow-md active:scale-95"
-            >
-              <span className="material-symbols-outlined">add</span>
-            </button>
-            
-            {showAddMenu && (
-              <div className="absolute top-full right-0 pt-2 w-48 z-50 animate-in fade-in zoom-in-95 duration-200">
-                <div className="bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden p-2">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-2 mb-1">
-                    {t.noteList.addTo} {currentFolder || 'Root'}
-                  </p>
-                  {noteTypes.map((item) => (
+          {!isTrashView && (
+            <div className="relative" ref={addMenuRef} onMouseEnter={() => setShowAddMenu(true)} onMouseLeave={() => setShowAddMenu(false)}>
+              <button 
+                className="bg-primary text-white p-1.5 rounded-lg flex items-center justify-center hover:bg-primary/90 transition-all shadow-md active:scale-95"
+              >
+                <span className="material-symbols-outlined">add</span>
+              </button>
+              
+              {showAddMenu && (
+                <div className="absolute top-full right-0 pt-2 w-48 z-50 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden p-2">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-2 mb-1">
+                      {t.noteList.addTo} {currentFolderName || 'Root'}
+                    </p>
+                    {noteTypes.map((item) => (
+                      <button
+                        key={item.type}
+                        onClick={() => handleAddNoteClick(item.type)}
+                        className="w-full flex items-center gap-3 px-2 py-2 text-sm rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-left"
+                      >
+                        <span className={`material-symbols-outlined text-lg ${item.color}`}>{item.icon}</span>
+                        <span>{item.type}</span>
+                      </button>
+                    ))}
+                    
+                    {/* Divider and New Folder Option */}
+                    <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
                     <button
-                      key={item.type}
-                      onClick={() => handleAddNoteClick(item.type)}
+                      onClick={handleCreateFolder}
                       className="w-full flex items-center gap-3 px-2 py-2 text-sm rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-left"
                     >
-                      <span className={`material-symbols-outlined text-lg ${item.color}`}>{item.icon}</span>
-                      <span>{item.type}</span>
+                      <span className="material-symbols-outlined text-lg text-amber-500">create_new_folder</span>
+                      <span>{t.noteList.newFolder}</span>
                     </button>
-                  ))}
-                  
-                  {/* Divider and New Folder Option */}
-                  <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
-                  <button
-                    onClick={handleCreateFolder}
-                    className="w-full flex items-center gap-3 px-2 py-2 text-sm rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-left"
-                  >
-                    <span className="material-symbols-outlined text-lg text-amber-500">create_new_folder</span>
-                    <span>{t.noteList.newFolder}</span>
-                  </button>
 
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2">
@@ -533,105 +807,120 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
           </div>
         )}
         
-        {displayItems.map((item: any) => {
-          if (item.isFolder) {
-            // RENDER FOLDER ITEM
-            return (
-              <div 
-                key={item.id}
-                className={`group relative transition-all border border-transparent cursor-pointer bg-white dark:bg-[#1c2b33] hover:bg-gray-50 dark:hover:bg-gray-800/80
-                  ${viewMode === 'grid' ? 'rounded-xl p-4 flex flex-col items-center text-center shadow-sm' : 'px-4 py-3 rounded-lg flex items-center gap-3 shadow-sm'}
-                `}
-              >
-                 <div 
-                   onClick={() => setCurrentFolder(item.name)}
-                   className={`shrink-0 flex items-center justify-center text-amber-400 ${viewMode === 'grid' ? 'mb-2' : ''}`}
-                 >
-                    <span className="material-symbols-outlined" style={{ fontSize: viewMode === 'grid' ? '48px' : '24px' }}>folder</span>
-                 </div>
-                 
-                 <div 
-                   onClick={() => setCurrentFolder(item.name)}
-                   className="flex-1 min-w-0 text-left"
-                 >
-                   <h3 className={`font-bold text-gray-800 dark:text-gray-200 ${viewMode === 'grid' ? 'text-sm' : 'text-sm'}`}>
-                     {item.name}
-                   </h3>
-                   {viewMode === 'list' && (
-                     <p className="text-[10px] text-gray-400 mt-0.5">{item.date}</p>
-                   )}
-                 </div>
-                 
-                 {/* Folder action buttons */}
-                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                   {onUpdateFolder && (
-                     <button
-                       onClick={(e) => {
-                         e.stopPropagation();
-                         setModalConfig({
-                           isOpen: true,
-                           type: 'input',
-                           title: 'Rename Folder',
-                           placeholder: 'New folder name',
-                           initialValue: item.name,
-                           confirmLabel: 'Rename',
-                           confirmColor: 'bg-primary',
-                           onConfirm: (newName) => {
-                             if (newName.trim() && newName !== item.name) {
-                               onUpdateFolder(item.id, newName.trim());
-                             }
-                             setModalConfig(null);
-                           }
-                         });
-                         setModalInputValue(item.name);
-                       }}
-                       className="p-1 text-gray-400 hover:text-primary transition-colors"
-                       title="Rename folder"
-                     >
-                       <span className="material-symbols-outlined text-base">edit</span>
-                     </button>
-                   )}
-                   {onDeleteFolder && (
-                     <button
-                       onClick={(e) => {
-                         e.stopPropagation();
-                         setModalConfig({
-                           isOpen: true,
-                           type: 'confirm',
-                           title: 'Delete Folder',
-                           message: `Are you sure you want to delete "${item.name}"? All notes inside will also be deleted.`,
-                           confirmLabel: 'Delete',
-                           confirmColor: 'bg-red-500',
-                           onConfirm: () => {
-                             onDeleteFolder(item.id);
-                             setModalConfig(null);
-                           }
-                         });
-                       }}
-                       className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-                       title="Delete folder"
-                     >
-                       <span className="material-symbols-outlined text-base">delete</span>
-                     </button>
-                   )}
-                 </div>
-                 
-                 {viewMode === 'list' && (
-                    <span 
-                      onClick={() => setCurrentFolder(item.name)}
-                      className="material-symbols-outlined text-gray-300 text-sm"
-                    >
-                      chevron_right
+        {/* Render content based on current view */}
+        {!loading && !error && currentFolderId === null && (
+          <>
+            {/* Tree View - Show folder tree */}
+            {buildFolderTree(folders).map(folder => renderFolderTree(folder))}
+            
+            {/* Root notes (notes without folder) */}
+            {displayItems.filter(item => !('isFolder' in item)).map((item: any) => {
+              const note = item as Note;
+              return (
+                <div
+                  key={note.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, note.id)}
+                  onClick={() => onSelectNote(note.id)}
+                  className={`group relative transition-all cursor-pointer rounded-lg px-3 py-2.5 flex items-center gap-2.5 ${
+                    selectedNoteId === note.id 
+                      ? 'bg-primary/5 dark:bg-primary/10' 
+                      : 'hover:bg-white dark:hover:bg-gray-800/30'
+                  }`}
+                >
+                  {/* Note Icon */}
+                  <div className={`shrink-0 p-1.5 rounded-md ${
+                    note.type === 'Markdown' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 
+                    note.type === 'Rich Text' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' :
+                    note.type === 'Mind Map' ? 'bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400' :
+                    'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400'
+                  }`}>
+                    <span className="material-symbols-outlined text-lg">
+                      {note.type === 'Markdown' ? 'markdown' : 
+                      note.type === 'Rich Text' ? 'format_size' : 
+                      note.type === 'Mind Map' ? 'account_tree' : 'draw'}
                     </span>
-                 )}
-              </div>
-            );
-          } else {
-            // RENDER NOTE ITEM
-            const note = item as Note;
+                  </div>
+                  
+                  {/* Note Content */}
+                  <div className="flex-1 min-w-0">
+                    <h3 className={`text-sm font-medium truncate ${selectedNoteId === note.id ? 'text-primary' : 'text-gray-700 dark:text-gray-200'}`}>
+                      {note.title}
+                    </h3>
+                    <div className="text-[10px] text-gray-400 truncate">{note.updatedAt}</div>
+                  </div>
+
+                  {/* Tags */}
+                  {note.tags && note.tags.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      {note.tags.slice(0, 2).map((tag, idx) => {
+                        const tagObj = typeof tag === 'string' ? { name: tag, color: '#6b7280' } : tag;
+                        return (
+                          <span 
+                            key={idx}
+                            className="text-[9px] px-1.5 py-0.5 rounded-md"
+                            style={{ backgroundColor: `${tagObj.color}20`, color: tagObj.color }}
+                          >
+                            {tagObj.name}
+                          </span>
+                        );
+                      })}
+                      {note.tags.length > 2 && (
+                        <span className="text-[9px] text-gray-400">+{note.tags.length - 2}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-1">
+                    {note.isFavorite && (
+                      <span className="material-symbols-outlined text-amber-400 text-sm fill-current">star</span>
+                    )}
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === note.id ? null : note.id); }}
+                      className={`p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 opacity-0 group-hover:opacity-100 ${
+                          activeMenuId === note.id ? 'opacity-100' : ''
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-base">more_horiz</span>
+                    </button>
+                  </div>
+
+                  {/* Context Menu */}
+                  {activeMenuId === note.id && (
+                    <div ref={menuRef} className="absolute right-2 top-8 w-40 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden py-1">
+                      <button onClick={(e) => handleMenuAction(e, 'favorite', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                        <span className={`material-symbols-outlined text-sm ${note.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`}>star</span> 
+                        {note.isFavorite ? 'Remove Favorite' : 'Add Favorite'}
+                      </button>
+                      <button onClick={(e) => handleMenuAction(e, 'tags', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-sm">label</span> Add Tag
+                      </button>
+                      <button onClick={(e) => handleMenuAction(e, 'folder', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-sm">folder</span> Move
+                      </button>
+                      <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
+                      <button onClick={(e) => handleMenuAction(e, 'delete', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-sm">delete</span> Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* Folder view - show notes in current folder */}
+        {!loading && !error && currentFolderId !== null && notes
+          .filter(n => matchNoteToFolder(n, currentFolderId))
+          .map((note) => {
+            // RENDER NOTE ITEM IN FOLDER VIEW
             return (
               <div 
                 key={note.id}
+                draggable
+                onDragStart={(e) => handleDragStart(e, note.id)}
                 onClick={() => onSelectNote(note.id)}
                 className={`group relative transition-all border border-transparent cursor-pointer ${
                   viewMode === 'grid' 
@@ -650,19 +939,29 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
                 {/* Context Menu Logic */}
                 {activeMenuId === note.id && (
                     <div ref={menuRef} className="absolute right-2 top-8 w-40 bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100 py-1">
-                        <button onClick={(e) => handleMenuAction(e, 'favorite', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                          <span className={`material-symbols-outlined text-sm ${note.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`}>star</span> 
-                          {note.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-                        </button>
-                        <button onClick={(e) => handleMenuAction(e, 'tags', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                          <span className="material-symbols-outlined text-sm">label</span> {t.noteList.tagBtn}...
-                        </button>
-                        <button onClick={(e) => handleMenuAction(e, 'folder', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
-                          <span className="material-symbols-outlined text-sm">folder</span> {t.noteList.moveBtn}...
-                        </button>
+                        {!isTrashView ? (
+                          <>
+                            <button onClick={(e) => handleMenuAction(e, 'favorite', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                              <span className={`material-symbols-outlined text-sm ${note.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`}>star</span> 
+                              {note.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+                            </button>
+                            <button onClick={(e) => handleMenuAction(e, 'tags', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                              <span className="material-symbols-outlined text-sm">label</span> {t.noteList.tagBtn}...
+                            </button>
+                            <button onClick={(e) => handleMenuAction(e, 'folder', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                              <span className="material-symbols-outlined text-sm">folder</span> {t.noteList.moveBtn}...
+                            </button>
+                          </>
+                        ) : (
+                          <button onClick={(e) => handleMenuAction(e, 'restore', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2">
+                            <span className="material-symbols-outlined text-sm text-green-500">restore_from_trash</span> 
+                            {t.language === 'zh' ? '从回收站还原' : 'Restore from Trash'}
+                          </button>
+                        )}
                         <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
                         <button onClick={(e) => handleMenuAction(e, 'delete', note)} className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 flex items-center gap-2">
-                          <span className="material-symbols-outlined text-sm">delete</span> {t.noteList.confirmDelete}
+                          <span className="material-symbols-outlined text-sm">{isTrashView ? 'delete_forever' : 'delete'}</span> 
+                          {isTrashView ? (t.language === 'zh' ? '永久删除' : 'Delete Forever') : t.noteList.confirmDelete}
                         </button>
                     </div>
                 )}
@@ -738,6 +1037,27 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
                        </div>
                     </div>
 
+                    {/* Tags */}
+                    {note.tags && note.tags.length > 0 && (
+                      <div className="flex items-center gap-1">
+                        {note.tags.slice(0, 2).map((tag, idx) => {
+                          const tagObj = typeof tag === 'string' ? { name: tag, color: '#6b7280' } : tag;
+                          return (
+                            <span 
+                              key={idx}
+                              className="text-[9px] px-1.5 py-0.5 rounded-md"
+                              style={{ backgroundColor: `${tagObj.color}20`, color: tagObj.color }}
+                            >
+                              {tagObj.name}
+                            </span>
+                          );
+                        })}
+                        {note.tags.length > 2 && (
+                          <span className="text-[9px] text-gray-400">+{note.tags.length - 2}</span>
+                        )}
+                      </div>
+                    )}
+
                     <div className="flex items-center gap-1 opacity-100 group-hover:opacity-100 transition-opacity">
                       {note.isFavorite && (
                         <span className="material-symbols-outlined text-amber-400 text-sm fill-current">star</span>
@@ -755,8 +1075,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
                 )}
               </div>
             );
-          }
-        })}
+          })}
       </div>
       <div className="p-3 border-t border-gray-200 dark:border-gray-800 flex justify-between items-center text-[10px] text-gray-400">
         <span>
@@ -791,20 +1110,57 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
                 </form>
               )}
               
-              <div className="flex justify-end gap-2">
-                <button 
-                  onClick={closeModal}
-                  className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                >
-                  {t.noteList.cancel}
-                </button>
-                <button 
-                  onClick={() => handleModalSubmit()}
-                  className={`px-3 py-1.5 text-xs font-bold text-white rounded-lg shadow-sm transition-all ${modalConfig.confirmColor || 'bg-primary hover:bg-primary/90'}`}
-                >
-                  {modalConfig.confirmLabel || t.noteList.create}
-                </button>
-              </div>
+              {modalConfig.type === 'folder-tree' && (
+                <div className="max-h-96 overflow-y-auto mb-4 border border-gray-200 dark:border-gray-700 rounded-lg p-2">
+                  {/* Root folder option */}
+                  <button
+                    onClick={() => {
+                      modalConfig.onConfirm('');
+                      setModalConfig(null);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center gap-2 mb-1"
+                  >
+                    <span className="material-symbols-outlined text-sm text-amber-400">folder</span>
+                    <span className="text-sm">{t.language === 'zh' ? '根目录' : 'Root'}</span>
+                  </button>
+                  
+                  {/* Folder tree */}
+                  {buildFolderTree(folders).map(folder => 
+                    renderFolderPicker(folder, (folderId) => {
+                      modalConfig.onConfirm(folderId);
+                      setModalConfig(null);
+                    })
+                  )}
+                </div>
+              )}
+              
+              {modalConfig.type !== 'folder-tree' && (
+                <div className="flex justify-end gap-2">
+                  <button 
+                    onClick={closeModal}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                  >
+                    {t.noteList.cancel}
+                  </button>
+                  <button 
+                    onClick={() => handleModalSubmit()}
+                    className={`px-3 py-1.5 text-xs font-bold text-white rounded-lg shadow-sm transition-all ${modalConfig.confirmColor || 'bg-primary hover:bg-primary/90'}`}
+                  >
+                    {modalConfig.confirmLabel || t.noteList.create}
+                  </button>
+                </div>
+              )}
+              
+              {modalConfig.type === 'folder-tree' && (
+                <div className="flex justify-end">
+                  <button 
+                    onClick={closeModal}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                  >
+                    {t.noteList.cancel}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

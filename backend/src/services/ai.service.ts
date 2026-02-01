@@ -739,6 +739,7 @@ export class AIService {
         cost: true,
         context: true,
         description: true,
+        defaultTemplateId: true,
         userId: true,
         workspaceId: true,
         createdAt: true,
@@ -754,12 +755,40 @@ export class AIService {
    * Create a new AI model
    */
   async createModel(userId: string, modelData: any) {
+    // Remove invalid foreign key fields
+    const { defaultTemplateId, default_template_id, ...cleanData } = modelData;
+    
+    // Build the data object
+    const dataToCreate: any = {
+      ...cleanData,
+      isCustom: true,
+      userId,
+    };
+    
+    // Handle endpoint: convert empty string to null
+    if (dataToCreate.endpoint === '') {
+      dataToCreate.endpoint = null;
+    }
+    
+    // Handle apiKey: convert empty string to null
+    if (dataToCreate.apiKey === '') {
+      dataToCreate.apiKey = null;
+    }
+    
+    // Only add defaultTemplateId if it's provided, not empty, and exists
+    const templateId = defaultTemplateId || default_template_id;
+    if (templateId && templateId.trim() !== '') {
+      const template = await prisma.aITemplate.findUnique({
+        where: { id: templateId },
+      });
+      
+      if (template) {
+        dataToCreate.defaultTemplateId = templateId;
+      }
+    }
+    
     const model = await prisma.aIModel.create({
-      data: {
-        ...modelData,
-        isCustom: true,
-        userId,
-      },
+      data: dataToCreate,
     });
 
     return model;
@@ -785,9 +814,45 @@ export class AIService {
       );
     }
 
+    // Build the update data object, excluding defaultTemplateId/default_template_id initially
+    const { defaultTemplateId, default_template_id, ...updateData } = modelData;
+    
+    // Handle endpoint: convert empty string to null
+    if (updateData.endpoint === '') {
+      updateData.endpoint = null;
+    }
+    
+    // Handle apiKey: convert empty string to null
+    if (updateData.apiKey === '') {
+      updateData.apiKey = null;
+    }
+    
+    // Handle defaultTemplateId: only process if explicitly provided
+    const templateId = defaultTemplateId !== undefined ? defaultTemplateId : default_template_id;
+    
+    if (templateId !== undefined) {
+      if (templateId === '' || templateId === null) {
+        // Clear the template
+        updateData.defaultTemplateId = null;
+      } else {
+        // Verify template exists before setting
+        const template = await prisma.aITemplate.findUnique({
+          where: { id: templateId },
+        });
+        
+        if (template) {
+          updateData.defaultTemplateId = templateId;
+        } else {
+          // Template doesn't exist, set to null instead of keeping invalid FK
+          updateData.defaultTemplateId = null;
+        }
+      }
+    }
+    // If templateId is undefined, don't modify defaultTemplateId in the update
+
     const updated = await prisma.aIModel.update({
       where: { id: modelId },
-      data: modelData,
+      data: updateData,
     });
 
     return updated;

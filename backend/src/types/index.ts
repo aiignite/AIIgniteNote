@@ -78,6 +78,7 @@ export interface NotesListParams {
   folderId?: string;
   workspaceId?: string;
   isFavorite?: boolean;
+  isDeleted?: boolean;
   search?: string;
   sortBy?: 'createdAt' | 'updatedAt' | 'title';
   sortOrder?: 'asc' | 'desc';
