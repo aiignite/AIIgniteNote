@@ -1,8 +1,34 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Note, NoteType } from '../types';
+import { Note, NoteType, AITemplate } from '../types';
 import { useLanguageStore } from '../store/languageStore';
 import { Folder } from '../services/api';
+
+// 格式化时间为友好显示
+const formatTimeAgo = (dateString: string, isZh: boolean): string => {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+
+  if (diffSec < 60) {
+    return isZh ? '刚刚' : 'Just now';
+  } else if (diffMin < 60) {
+    return isZh ? `${diffMin}分钟前` : `${diffMin}m ago`;
+  } else if (diffHour < 24) {
+    return isZh ? `${diffHour}小时前` : `${diffHour}h ago`;
+  } else if (diffDay < 7) {
+    return isZh ? `${diffDay}天前` : `${diffDay}d ago`;
+  } else {
+    // 超过7天显示日期
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    return isZh ? `${month}月${day}日` : `${month}/${day}`;
+  }
+};
 
 interface NoteListProps {
   notes: Note[];
@@ -10,6 +36,7 @@ interface NoteListProps {
   selectedNoteId: string | null;
   onSelectNote: (id: string) => void;
   onAddNote: (type: NoteType, folderId?: string | null) => void;
+  onAddNoteFromTemplate?: (templateId: string, folderId?: string | null) => void;
   onAddFolder?: (name: string, parentId?: string) => void;
   onDeleteFolder?: (id: string) => void;
   onUpdateFolder?: (id: string, name: string) => void;
@@ -20,6 +47,8 @@ interface NoteListProps {
   width?: number;
   loading?: boolean;
   error?: string | null;
+  templates?: AITemplate[];
+  templatesLoading?: boolean;
   isTrashView?: boolean;
   onRestoreNote?: (id: string) => void;
 }
@@ -61,15 +90,30 @@ interface TreeNoteNode {
 
 type TreeNode = TreeFolderNode | TreeNoteNode;
 
-const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId, onSelectNote, onAddNote, onAddFolder, onDeleteFolder, onUpdateFolder, onMoveFolder, onDeleteNote, onUpdateNote, onToggleFavorite, width, loading = false, error = null, isTrashView = false, onRestoreNote }) => {
+const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId, onSelectNote, onAddNote, onAddNoteFromTemplate, onAddFolder, onDeleteFolder, onUpdateFolder, onMoveFolder, onDeleteNote, onUpdateNote, onToggleFavorite, width, loading = false, error = null, templates = [], templatesLoading = false, isTrashView = false, onRestoreNote }) => {
   // Default viewMode changed to 'list' as requested
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [activeTemplateType, setActiveTemplateType] = useState<NoteType | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('updatedAt');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  
+  // Hover delay timer for better UX
+  const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debug: Check templates prop
+  useEffect(() => {
+    console.log('[NoteList] Templates prop updated:', {
+      count: templates?.length || 0,
+      loading: templatesLoading,
+      templates: templates?.map(t => ({ id: t.id, name: t.name, noteType: t.noteType }))
+    });
+  }, [templates, templatesLoading]);
+  const [showTagsModal, setShowTagsModal] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
 
   // Search State
   const [searchQuery, setSearchQuery] = useState('');
@@ -95,6 +139,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
   const menuRef = useRef<HTMLDivElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const sortMenuRef = useRef<HTMLDivElement>(null);
+  const tagsModalRef = useRef<HTMLDivElement>(null);
   const modalInputRef = useRef<HTMLInputElement>(null);
 
   // Focus input when modal opens
@@ -122,11 +167,29 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
       if (sortMenuRef.current && !sortMenuRef.current.contains(event.target as Node)) {
         setShowSortMenu(false);
       }
+      if (tagsModalRef.current && !tagsModalRef.current.contains(event.target as Node)) {
+        setShowTagsModal(false);
+      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [modalConfig]);
+
+  useEffect(() => {
+    if (!showAddMenu) {
+      setActiveTemplateType(null);
+    }
+  }, [showAddMenu]);
+
+  // Cleanup hover timer on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+      }
+    };
+  }, []);
 
   const closeModal = () => {
     setModalConfig(null);
@@ -269,6 +332,12 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
 
     const filteredNotes = notes.filter(note => {
       if (showFavoritesOnly && !note.isFavorite) return false;
+      // Add tag filtering
+      if (selectedTags.size > 0) {
+        const noteTags = note.tags.map(t => typeof t === 'string' ? t : t.name);
+        const hasSelectedTag = Array.from(selectedTags).some(tag => noteTags.includes(tag));
+        if (!hasSelectedTag) return false;
+      }
       return true;
     });
 
@@ -368,7 +437,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
     };
 
     return { treeNodes: leveled, visibleNoteCount: countNotes(leveled) };
-  }, [folders, notes, folderNameMap, showFavoritesOnly, sortMode, sortOrder, searchQuery]);
+  }, [folders, notes, folderNameMap, showFavoritesOnly, sortMode, sortOrder, searchQuery, selectedTags]);
 
   const noteTypes: { type: NoteType; icon: string; color: string }[] = [
     { type: 'Markdown', icon: 'markdown', color: 'text-blue-500' },
@@ -376,6 +445,48 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
     { type: 'Mind Map', icon: 'account_tree', color: 'text-purple-500' },
     { type: 'Drawio', icon: 'draw', color: 'text-orange-500' },
   ];
+
+  const mapTemplateNoteType = (templateType?: string | null): NoteType | null => {
+    switch (templateType) {
+      case 'MARKDOWN':
+        return 'Markdown';
+      case 'RICHTEXT':
+        return 'Rich Text';
+      case 'MINDMAP':
+        return 'Mind Map';
+      case 'FLOWCHART':
+        return 'Drawio';
+      default:
+        return null;
+    }
+  };
+
+  const templatesByType = useMemo(() => {
+    const buckets: Record<NoteType, AITemplate[]> = {
+      Markdown: [],
+      'Rich Text': [],
+      'Mind Map': [],
+      Drawio: [],
+    };
+
+    console.log('[NoteList] Processing templates:', templates?.length || 0);
+    (templates || []).forEach((tmpl) => {
+      const mapped = mapTemplateNoteType(tmpl.noteType);
+      console.log('[NoteList] Template:', tmpl.name, 'noteType:', tmpl.noteType, 'mapped:', mapped);
+      if (mapped) {
+        buckets[mapped].push(tmpl);
+      }
+    });
+
+    console.log('[NoteList] Templates by type:', {
+      Markdown: buckets.Markdown.length,
+      'Rich Text': buckets['Rich Text'].length,
+      'Mind Map': buckets['Mind Map'].length,
+      Drawio: buckets.Drawio.length,
+    });
+
+    return buckets;
+  }, [templates]);
 
   const getSortLabel = () => {
     switch(sortMode) {
@@ -385,19 +496,71 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
     }
   };
 
+  // 获取所有可用的tags
+  const availableTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    notes.forEach(note => {
+      note.tags.forEach(tag => {
+        const tagName = typeof tag === 'string' ? tag : tag.name;
+        tagSet.add(tagName);
+      });
+    });
+    return Array.from(tagSet).sort();
+  }, [notes]);
+
+  // UUID校验函数
+  const isValidUUID = (id: string | null | undefined): boolean => {
+    if (!id) return false;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(id);
+  };
+
+  // cuid 格式校验（Prisma 默认生成的 ID 格式）
+  const isValidCuid = (id: string | null | undefined): boolean => {
+    if (!id) return false;
+    // cuid 通常是 25 个字符，以 c 开头
+    return /^c[a-z0-9]{20,30}$/i.test(id);
+  };
+
+  // 验证是否是有效的数据库 ID
+  const isValidId = (id: string | null | undefined): boolean => {
+    return isValidUUID(id) || isValidCuid(id);
+  };
+
   const resolveTargetFolderId = (): string | null => {
-    if (currentFolderId) return currentFolderId;
-    if (selectedNote?.folderId) return selectedNote.folderId;
-    if (selectedNote?.folder) {
-      const matchedFolder = folders.find(f => f.name === selectedNote.folder);
-      if (matchedFolder) return matchedFolder.id;
+    // 优先使用当前选中笔记的folderId
+    if (selectedNote?.folderId && isValidId(selectedNote.folderId)) {
+      // 验证这个 folderId 在 folders 列表中存在
+      const folderExists = folders.some(f => f.id === selectedNote.folderId);
+      if (folderExists) {
+        return selectedNote.folderId;
+      }
     }
+    // 通过文件夹名查找folderId
+    if (selectedNote?.folder && selectedNote.folder !== 'General') {
+      const matchedFolder = folders.find(f => f.name === selectedNote.folder);
+      if (matchedFolder && isValidId(matchedFolder.id)) {
+        return matchedFolder.id;
+      }
+    }
+    // 其次使用当前浏览的文件夹
+    if (currentFolderId && isValidId(currentFolderId)) {
+      return currentFolderId;
+    }
+    // 返回 null 表示放在根目录
     return null;
   };
 
   const handleAddNoteClick = (type: NoteType) => {
     const targetFolderId = resolveTargetFolderId();
-    onAddNote(type, targetFolderId);
+    onAddNote(type, targetFolderId ?? undefined);
+    setShowAddMenu(false);
+  };
+
+  const handleTemplateCreate = (templateId: string) => {
+    if (!onAddNoteFromTemplate) return;
+    const targetFolderId = resolveTargetFolderId();
+    onAddNoteFromTemplate(templateId, targetFolderId ?? undefined);
     setShowAddMenu(false);
   };
 
@@ -540,7 +703,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
             <h3 className={`text-sm font-medium truncate ${selectedNoteId === note.id ? 'text-primary' : 'text-gray-700 dark:text-gray-200'}`}>
               {note.title}
             </h3>
-            <div className="text-[10px] text-gray-400 truncate">{note.updatedAt}</div>
+            <div className="text-[10px] text-gray-400 truncate">{formatTimeAgo(note.updatedAt, t.language === 'zh')}</div>
           </div>
 
           {note.tags && note.tags.length > 0 && (
@@ -748,10 +911,10 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
 
   return (
     <div 
-      className="flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-background-dark shrink-0 transition-none relative" 
+      className="flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-background-dark shrink-0 transition-none relative overflow-visible" 
       style={{ width: width ? `${width}px` : (viewMode === 'grid' ? '300px' : '260px') }}
     >
-      <div className="p-4 border-b border-gray-200 dark:border-gray-800 z-20 relative">
+      <div className="p-4 border-b border-gray-200 dark:border-gray-800 z-20 relative overflow-visible">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             {currentFolderId && (
@@ -777,21 +940,114 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
               </button>
               
               {showAddMenu && (
-                <div className="absolute top-full right-0 pt-2 w-48 z-50 animate-in fade-in zoom-in-95 duration-200">
-                  <div className="bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden p-2">
+                <div className="absolute top-full right-0 pt-2 w-48 z-[9999] animate-in fade-in zoom-in-95 duration-200">
+                  <div className="bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-visible p-2">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-2 mb-1">
                       {t.noteList.addTo} {currentFolderName || 'Root'}
                     </p>
-                    {noteTypes.map((item) => (
-                      <button
-                        key={item.type}
-                        onClick={() => handleAddNoteClick(item.type)}
-                        className="w-full flex items-center gap-3 px-2 py-2 text-sm rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-left"
-                      >
-                        <span className={`material-symbols-outlined text-lg ${item.color}`}>{item.icon}</span>
-                        <span>{item.type}</span>
-                      </button>
-                    ))}
+                    {noteTypes.map((item) => {
+                      const typeTemplates = templatesByType[item.type] || [];
+                      const showTemplateMenu = activeTemplateType === item.type && typeTemplates.length > 0;
+
+                      console.log('[NoteList] Rendering type:', item.type, {
+                        templatesCount: typeTemplates.length,
+                        activeType: activeTemplateType,
+                        showMenu: showTemplateMenu,
+                        templates: typeTemplates.map(t => t.name)
+                      });
+
+                      return (
+                        <div
+                          key={item.type}
+                          className="relative"
+                          onMouseEnter={() => {
+                            // 清除任何待关闭的定时器
+                            if (hoverTimerRef.current) {
+                              clearTimeout(hoverTimerRef.current);
+                              hoverTimerRef.current = null;
+                            }
+                            // 悬停时显示子菜单（如果有模板）
+                            if (typeTemplates.length > 0) {
+                              setActiveTemplateType(item.type);
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            // 延迟关闭子菜单，给用户时间移动鼠标
+                            if (hoverTimerRef.current) {
+                              clearTimeout(hoverTimerRef.current);
+                            }
+                            hoverTimerRef.current = setTimeout(() => {
+                              setActiveTemplateType(null);
+                            }, 500); // 500ms 延迟
+                          }}
+                        >
+                          <button
+                            data-note-type={item.type}
+                            onClick={() => handleAddNoteClick(item.type)}
+                            className="w-full flex items-center gap-3 px-2 py-2 text-sm rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-left"
+                          >
+                            <span className={`material-symbols-outlined text-lg ${item.color}`}>{item.icon}</span>
+                            <div className="flex items-center justify-between flex-1 min-w-0">
+                              <span className="truncate">{item.type}</span>
+                              <div className="flex items-center gap-1 text-gray-400">
+                                {templatesLoading && activeTemplateType === item.type && (
+                                  <span className="material-symbols-outlined text-xs animate-spin">autorenew</span>
+                                )}
+                                {typeTemplates.length > 0 && !templatesLoading && (
+                                  <>
+                                    <span className="text-[10px]">{typeTemplates.length}</span>
+                                    <span className="material-symbols-outlined text-xs">chevron_right</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+
+                          {/* Template submenu - show on hover with delay before hiding */}
+                          {typeTemplates.length > 0 && activeTemplateType === item.type && (
+                            <div 
+                              className="absolute left-full top-0 ml-0 bg-white dark:bg-[#1c2b33] rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 py-1 w-48"
+                              style={{ zIndex: 99999 }}
+                              onMouseEnter={() => {
+                                // 鼠标进入子菜单时，取消关闭定时器
+                                if (hoverTimerRef.current) {
+                                  clearTimeout(hoverTimerRef.current);
+                                  hoverTimerRef.current = null;
+                                }
+                              }}
+                              onMouseLeave={() => {
+                                // 鼠标离开子菜单时，延迟关闭
+                                if (hoverTimerRef.current) {
+                                  clearTimeout(hoverTimerRef.current);
+                                }
+                                hoverTimerRef.current = setTimeout(() => {
+                                  setActiveTemplateType(null);
+                                }, 300);
+                              }}
+                            >
+                              <div className="px-3 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700 mb-1">模板</div>
+                              <div className="max-h-60 overflow-y-auto">
+                                {typeTemplates.map((tmpl) => (
+                                  <button
+                                    key={tmpl.id}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleTemplateCreate(tmpl.id);
+                                      setActiveTemplateType(null);
+                                      setShowAddMenu(false);
+                                    }}
+                                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/70 transition-colors"
+                                  >
+                                    <span className="text-sm text-gray-800 dark:text-gray-100 truncate block">{tmpl.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                     
                     {/* Divider and New Folder Option */}
                     <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
@@ -895,37 +1151,72 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
              )}
           </div>
 
-          {/* View Toggles */}
-          <div className="flex bg-gray-200 dark:bg-gray-800/50 rounded-lg p-0.5 shrink-0">
-            <button 
-              onClick={() => setViewMode('list')}
-              className={`p-1 rounded-md flex items-center justify-center transition-all ${
-                viewMode === 'list' 
-                  ? 'bg-white dark:bg-gray-700 text-primary shadow-sm' 
-                  : 'text-gray-400 hover:text-gray-600'
+          {/* Tag Search Button */}
+          <div className="relative" ref={tagsModalRef}>
+            <button
+              onClick={() => setShowTagsModal(!showTagsModal)}
+              className={`p-1.5 rounded-lg transition-all h-full flex items-center justify-center ${
+                selectedTags.size > 0 
+                  ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' 
+                  : 'bg-gray-200 dark:bg-gray-800/50 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}
-              title="List View"
+              title={selectedTags.size > 0 ? `${selectedTags.size} tag(s) selected` : "Filter by tags"}
             >
-              <span className="material-symbols-outlined text-sm">format_list_bulleted</span>
+              <span className="material-symbols-outlined text-sm">label</span>
+              {selectedTags.size > 0 && (
+                <span className="ml-1 text-xs font-bold">{selectedTags.size}</span>
+              )}
             </button>
-            <button 
-              onClick={() => setViewMode('grid')}
-              className={`p-1 rounded-md flex items-center justify-center transition-all ${
-                viewMode === 'grid' 
-                  ? 'bg-white dark:bg-gray-700 text-primary shadow-sm' 
-                  : 'text-gray-400 hover:text-gray-600'
-              }`}
-              title="Grid View"
-            >
-              <span className="material-symbols-outlined text-sm">splitscreen</span>
-            </button>
+            
+            {showTagsModal && (
+              <div className="absolute top-full right-0 mt-2 w-64 max-h-80 overflow-y-auto bg-white dark:bg-[#1c2b33] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 z-50">
+                <div className="p-3 border-b border-gray-100 dark:border-gray-700">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Available Tags</p>
+                  {availableTags.length === 0 ? (
+                    <p className="text-xs text-gray-500">No tags available</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {availableTags.map((tag) => (
+                        <button
+                          key={tag}
+                          onClick={() => {
+                            const newTags = new Set(selectedTags);
+                            if (newTags.has(tag)) {
+                              newTags.delete(tag);
+                            } else {
+                              newTags.add(tag);
+                            }
+                            setSelectedTags(newTags);
+                          }}
+                          className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                            selectedTags.has(tag)
+                              ? 'bg-primary text-white'
+                              : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {selectedTags.size > 0 && (
+                  <div className="p-2 border-t border-gray-100 dark:border-gray-700">
+                    <button
+                      onClick={() => setSelectedTags(new Set())}
+                      className="w-full px-2 py-1.5 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    >
+                      Clear Filters
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      <div className={`flex-1 overflow-y-auto scrollbar-hide p-3 flex flex-col ${
-        viewMode === 'grid' ? 'gap-3' : 'gap-1'
-      }`}>
+      <div className="flex-1 overflow-y-auto scrollbar-hide p-3 flex flex-col gap-1">
         {/* Loading State */}
         {loading && (
           <div className="flex flex-col items-center justify-center py-10">

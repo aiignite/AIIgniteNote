@@ -8,60 +8,52 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
+// Helper function to validate cuid format (Prisma default ID format)
+function isValidCuid(id: string): boolean {
+  // cuid typically starts with 'c' and is 25-30 characters
+  return /^c[a-z0-9]{20,30}$/i.test(id);
+}
+
+// Validate if ID is a valid database ID (UUID or cuid)
+function isValidId(id: string): boolean {
+  return isValidUUID(id) || isValidCuid(id);
+}
+
 export class NotesService {
   /**
    * Create a new note
    */
   async create(userId: string, data: NoteCreateInput) {
-    // Handle folder - support both folderId (UUID) and folder name
+    // Handle folder - support valid UUID or cuid folderId
     let folderIdToUse = data.folderId;
 
     if (data.folderId) {
-      // Check if folderId is a valid UUID
-      if (isValidUUID(data.folderId)) {
-        // Verify folder exists if provided
-        const folder = await prisma.folder.findFirst({
-          where: {
-            id: data.folderId,
-            OR: [
-              { authorId: userId },
-              { workspace: { members: { some: { userId } } } },
-            ],
-          },
-        });
+      // Check if folderId is a valid ID format
+      if (!isValidId(data.folderId)) {
+        throw new ApiErrorClass(
+          'INVALID_FOLDER_ID',
+          'Folder ID must be a valid UUID or cuid',
+          400
+        );
+      }
 
-        if (!folder) {
-          throw new ApiErrorClass(
-            'FOLDER_NOT_FOUND',
-            'Folder not found or access denied',
-            404
-          );
-        }
-      } else {
-        // Treat as folder name, look up or create folder
-        const existingFolder = await prisma.folder.findFirst({
-          where: {
-            name: data.folderId,
-            authorId: userId,
-            workspaceId: data.workspaceId || null,
-          },
-        });
+      // Verify folder exists
+      const folder = await prisma.folder.findFirst({
+        where: {
+          id: data.folderId,
+          OR: [
+            { authorId: userId },
+            { workspace: { members: { some: { userId } } } },
+          ],
+        },
+      });
 
-        if (existingFolder) {
-          folderIdToUse = existingFolder.id;
-        } else {
-          // Create new folder with the provided name
-          const newFolder = await prisma.folder.create({
-            data: {
-              name: data.folderId,
-              authorId: userId,
-              workspaceId: data.workspaceId || null,
-              icon: 'folder',
-              color: '#6b7280',
-            },
-          });
-          folderIdToUse = newFolder.id;
-        }
+      if (!folder) {
+        throw new ApiErrorClass(
+          'FOLDER_NOT_FOUND',
+          'Folder not found or access denied',
+          404
+        );
       }
     }
 

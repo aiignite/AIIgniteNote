@@ -235,8 +235,7 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ value, onChange, darkMo
         <MDEditorLazy
           value={internalValue}
           onChange={handleChange}
-          height="100%"
-          minHeight={400}
+          height="calc(100vh - 120px)"
           preview="live"
           className="flex-1 border-none shadow-none bg-transparent"
           textareaProps={{

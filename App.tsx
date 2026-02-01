@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Note, ViewState, NoteType } from './types';
+import { Note, ViewState, NoteType, AITemplate } from './types';
 import { api, Note as ApiNote, Folder } from './services/api';
 import { offlineSync } from './services/offlineSync';
 import { indexedDB } from './services/indexedDB';
@@ -127,6 +127,11 @@ const App: React.FC = () => {
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
 
+  // Templates state
+  const [templates, setTemplates] = useState<AITemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+
   // Folders state
   const [folders, setFolders] = useState<Folder[]>([]);
   const [foldersLoading, setFoldersLoading] = useState(false);
@@ -146,6 +151,7 @@ const App: React.FC = () => {
 
   const { primaryColor, getTheme, initialize: initTheme } = useThemeStore();
   const { t, language, initialize: initLanguage } = useLanguageStore();
+  const previousView = useRef<ViewState>('editor');
 
   // Initialize app
   useEffect(() => {
@@ -246,7 +252,6 @@ const App: React.FC = () => {
         const localNotes = response.data.map(apiNoteToLocalNote);
         console.log('[loadNotes] Converted notes:', localNotes);
         console.log('[loadNotes] Notes count:', localNotes.length);
-            folderId: folderId ?? null,
 
         setNotes(localNotes);
 
@@ -546,7 +551,64 @@ const App: React.FC = () => {
     }
   }, [isAuthenticated, loadFolders]);
 
-  // Handle template application
+  // Load templates for quick creation
+  const loadTemplates = useCallback(async () => {
+    if (!isAuthenticated) return;
+
+    try {
+      setTemplatesLoading(true);
+      setTemplatesError(null);
+
+      // Read cached templates first for faster UI
+      try {
+        const cached = await indexedDB.getTemplates();
+        if (cached?.length) {
+          setTemplates(cached);
+        }
+      } catch (cacheErr) {
+        console.warn('[loadTemplates] Failed to read cached templates:', cacheErr);
+      }
+
+      const response = await api.getTemplates() as { success: boolean; data: AITemplate[] };
+      if (response.success) {
+        const templateList = response.data || [];
+        setTemplates(templateList);
+
+        try {
+          await indexedDB.cacheTemplates(templateList);
+        } catch (cacheErr) {
+          console.warn('[loadTemplates] Failed to cache templates:', cacheErr);
+        }
+      }
+    } catch (error: any) {
+      console.error('[loadTemplates] Error loading templates:', error);
+      setTemplatesError(error?.message || 'Failed to load templates');
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [isAuthenticated]);
+
+  // Load templates once authenticated and refresh when returning from templates view
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    loadTemplates();
+  }, [isAuthenticated, loadTemplates]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (previousView.current === 'templates' && currentView !== 'templates') {
+      loadTemplates();
+    }
+    previousView.current = currentView;
+  }, [currentView, isAuthenticated, loadTemplates]);
+
+  useEffect(() => {
+    if (templatesError) {
+      console.warn('[App] Template load warning:', templatesError);
+    }
+  }, [templatesError]);
+
+  // Handle template application (from TemplateGallery card click)
   const handleTemplateApplied = useCallback(async (noteId: string) => {
     console.log('[handleTemplateApplied] Template applied, note ID:', noteId);
     
@@ -554,59 +616,74 @@ const App: React.FC = () => {
       // Reload notes to get the newly created note
       await loadNotes();
       
-      // Switch to editor view and select the note
-      setCurrentView('editor');
-      setSelectedNoteId(noteId);
-      
-      console.log('[handleTemplateApplied] Switched to editor view with note:', noteId);
+      // Switch to editor view and select the note AFTER notes are loaded
+      // Use setTimeout to ensure state has been updated
+      setTimeout(() => {
+        setCurrentView('editor');
+        setSelectedNoteId(noteId);
+        console.log('[handleTemplateApplied] Selected note ID set to:', noteId);
+      }, 100);
     } catch (error) {
       console.error('[handleTemplateApplied] Error:', error);
     }
   }, [loadNotes]);
 
-  // Handle adding a note from template
-  const handleAddNoteFromTemplate = useCallback(async (templateId: string, folder?: string) => {
+  // Handle adding a note from template (from NoteList dropdown)
+  const handleAddNoteFromTemplate = useCallback(async (templateId: string, folderId?: string | null) => {
     if (!isAuthenticated) return;
 
-    console.log('[handleAddNoteFromTemplate] Creating note from template:', { templateId, folder });
+    // Ensure folderId is either a valid UUID string or undefined
+    const validFolderId = folderId && folderId.length > 0 ? folderId : undefined;
+
+    console.log('[handleAddNoteFromTemplate] Creating note from template:', { templateId, folderId: validFolderId });
 
     try {
       const response = await api.applyTemplate(templateId, { 
-        folderId: folder ? undefined : undefined // API will handle folder mapping
+        folderId: validFolderId
       }) as { success: boolean; data: any };
 
       if (response.success && response.data) {
         console.log('[handleAddNoteFromTemplate] Note created:', response.data);
         
-        // Reload notes to get the newly created note
-        await loadNotes();
+        const newNote = apiNoteToLocalNote(response.data);
+        
+        // Add to local state immediately (like handleAddNote does)
+        setNotes(prev => [newNote, ...prev]);
         
         // Switch to editor view and select the note
         setCurrentView('editor');
-        setSelectedNoteId(response.data.id);
+        setSelectedNoteId(newNote.id);
+        console.log('[handleAddNoteFromTemplate] Selected note ID set to:', newNote.id);
         
-        console.log('[handleAddNoteFromTemplate] Switched to editor view with note:', response.data.id);
+        // Cache to IndexedDB
+        try {
+          await indexedDB.cacheNote(response.data);
+        } catch (cacheError) {
+          console.warn('Failed to cache note to IndexedDB:', cacheError);
+        }
       }
     } catch (error) {
       console.error('[handleAddNoteFromTemplate] Error:', error);
       alert('Failed to create note from template');
     }
-  }, [isAuthenticated, loadNotes]);
+  }, [isAuthenticated]);
 
-  const handleAddNote = useCallback(async (type: NoteType = 'Markdown', folderId?: string) => {
+  const handleAddNote = useCallback(async (type: NoteType = 'Markdown', folderId?: string | null) => {
     if (!isAuthenticated) return;
 
-    const targetFolder = folderId ? folders.find(f => f.id === folderId) : undefined;
+    // Ensure folderId is either a valid UUID string or undefined
+    const validFolderId = folderId && folderId.length > 0 ? folderId : undefined;
+    const targetFolder = validFolderId ? folders.find(f => f.id === validFolderId) : undefined;
     const folderName = targetFolder?.name || 'General';
 
-    console.log('[handleAddNote] Starting note creation:', { type, folderId, folderName, currentNotesCount: notes.length });
+    console.log('[handleAddNote] Starting note creation:', { type, folderId: validFolderId, folderName, currentNotesCount: notes.length });
 
     try {
       const response = await api.createNote({
         title: `New ${type} Note`,
         noteType: frontendTypeToBackendType(type) as any,
         content: '',
-        folderId,
+        folderId: validFolderId,
       }) as { success: boolean; data: ApiNote };
 
       if (response.success) {
@@ -941,6 +1018,8 @@ const App: React.FC = () => {
               width={leftPanelWidth}
               loading={notesLoading}
               error={notesError}
+              templates={templates}
+              templatesLoading={templatesLoading}
               isTrashView={currentView === 'trash'}
               onRestoreNote={async (id) => {
                 await api.restoreNote(id);
