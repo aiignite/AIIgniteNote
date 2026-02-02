@@ -2659,6 +2659,36 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                 <span className="material-symbols-outlined text-[12px]">select_all</span>
                 <span>发送选中内容</span>
               </button>
+              
+              {/* AI回复导入按钮 */}
+              {messages.length > 0 && messages[messages.length - 1]?.role === 'model' && messages[messages.length - 1]?.text && (
+                <>
+                  <button
+                    onClick={() => handleImportToEditorClick(messages[messages.length - 1].text, 'append')}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 rounded-lg text-[10px] font-medium transition-colors border border-blue-200 dark:border-blue-800"
+                    title="将最新AI回复追加到笔记末尾"
+                  >
+                    <span className="material-symbols-outlined text-[12px]">add</span>
+                    <span>追加</span>
+                  </button>
+                  <button
+                    onClick={() => handleImportToEditorClick(messages[messages.length - 1].text, 'insert')}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-600 dark:text-purple-400 rounded-lg text-[10px] font-medium transition-colors border border-purple-200 dark:border-purple-800"
+                    title="将最新AI回复插入到光标位置"
+                  >
+                    <span className="material-symbols-outlined text-[12px]">input</span>
+                    <span>插入</span>
+                  </button>
+                  <button
+                    onClick={() => handleImportToEditorClick(messages[messages.length - 1].text, 'replace')}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-50 dark:bg-orange-900/30 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-orange-600 dark:text-orange-400 rounded-lg text-[10px] font-medium transition-colors border border-orange-200 dark:border-orange-800"
+                    title="用最新AI回复替换整个笔记内容"
+                  >
+                    <span className="material-symbols-outlined text-[12px]">sync_alt</span>
+                    <span>替换全部</span>
+                  </button>
+                </>
+              )}
             </div>
             
             {/* 选中内容预览卡片 */}
