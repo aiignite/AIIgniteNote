@@ -1,7 +1,8 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef } from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.css';
+import { useNoteAIStore } from '../../store/noteAIStore';
 
 // Set KaTeX to window for Quill formula support
 if (typeof window !== 'undefined') {
@@ -11,12 +12,86 @@ if (typeof window !== 'undefined') {
 interface RichTextEditorProps {
   value: string;
   onChange: (value: string) => void;
+  onSelectionChange?: (selection: { text: string; start: number; end: number } | null) => void;
 }
 
-const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
+// 导出编辑器方法接口
+export interface RichTextEditorRef {
+  getSelection: () => { text: string; html: string } | null;
+  insertContent: (content: string, position?: 'cursor' | 'end' | 'replace') => void;
+  replaceContent: (content: string) => void;
+  getContent: () => string;
+}
+
+const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props, ref) => {
+  const { value, onChange, onSelectionChange } = props;
   const [QuillComponent, setQuillComponent] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [internalValue, setInternalValue] = useState(value);
+  const quillRef = useRef<any>(null);
+  const { setSelection, pushHistory } = useNoteAIStore();
+
+  // 暴露方法给父组件
+  useImperativeHandle(ref, () => ({
+    getSelection: () => {
+      const quill = quillRef.current?.getEditor?.();
+      if (!quill) return null;
+      
+      const range = quill.getSelection();
+      if (!range || range.length === 0) return null;
+      
+      const text = quill.getText(range.index, range.length);
+      const html = quill.root.innerHTML;
+      
+      return { text, html };
+    },
+    insertContent: (content: string, position: 'cursor' | 'end' | 'replace' = 'cursor') => {
+      const quill = quillRef.current?.getEditor?.();
+      if (!quill) {
+        // 如果Quill还没加载，直接操作内部值
+        let newValue = internalValue;
+        if (position === 'end') {
+          newValue = internalValue + content;
+        } else {
+          newValue = content + internalValue;
+        }
+        setInternalValue(newValue);
+        onChange(newValue);
+        pushHistory(newValue, 'ai-import');
+        return;
+      }
+      
+      if (position === 'end') {
+        const length = quill.getLength();
+        quill.insertText(length - 1, '\n\n' + content);
+      } else if (position === 'replace') {
+        const range = quill.getSelection();
+        if (range) {
+          quill.deleteText(range.index, range.length);
+          quill.insertText(range.index, content);
+        }
+      } else {
+        const range = quill.getSelection() || { index: 0 };
+        quill.insertText(range.index, content);
+      }
+      
+      const newValue = quill.root.innerHTML;
+      setInternalValue(newValue);
+      onChange(newValue);
+      pushHistory(newValue, 'ai-import');
+    },
+    replaceContent: (content: string) => {
+      const quill = quillRef.current?.getEditor?.();
+      if (quill) {
+        quill.setContents([]);
+        quill.clipboard.dangerouslyPasteHTML(0, content);
+      }
+      setInternalValue(content);
+      onChange(content);
+      pushHistory(content, 'ai-import');
+    },
+    getContent: () => internalValue
+  }), [internalValue, onChange, pushHistory]);
 
   useEffect(() => {
     // Robust dynamic import
@@ -38,6 +113,23 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
   useEffect(() => {
     setInternalValue(value);
   }, [value]);
+
+  // 监听选区变化
+  const handleSelectionChange = (range: any, source: string, editor: any) => {
+    if (range && range.length > 0) {
+      const text = editor.getText(range.index, range.length);
+      const selectionInfo = {
+        text,
+        start: range.index,
+        end: range.index + range.length
+      };
+      setSelection(selectionInfo);
+      onSelectionChange?.(selectionInfo);
+    } else {
+      setSelection(null);
+      onSelectionChange?.(null);
+    }
+  };
 
   const modules = {
     toolbar: [
@@ -115,9 +207,11 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
   return (
     <div className="h-full w-full flex flex-col bg-transparent">
       <QuillComponent
+        ref={quillRef}
         theme="snow"
         value={internalValue}
         onChange={handleChange}
+        onChangeSelection={handleSelectionChange}
         modules={modules}
         formats={formats}
         className="h-full flex flex-col"
@@ -125,6 +219,10 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange }) => {
       />
     </div>
   );
-};
+});
+
+RichTextEditor.displayName = 'RichTextEditor';
 
 export default RichTextEditor;
+
+export type { RichTextEditorRef };

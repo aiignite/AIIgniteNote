@@ -1,5 +1,6 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
+import { useNoteAIStore } from '../../store/noteAIStore';
 
 interface DrawioEditorProps {
   value: string;
@@ -7,10 +8,57 @@ interface DrawioEditorProps {
   darkMode?: boolean;
 }
 
-const DrawioEditor: React.FC<DrawioEditorProps> = ({ value, onChange, darkMode }) => {
+// 导出编辑器方法接口
+export interface DrawioEditorRef {
+  getSelection: () => null; // DrawIO 不支持选区
+  insertContent: (content: string) => void;
+  replaceContent: (content: string) => void;
+  getContent: () => string;
+  getContentAsXML: () => string;
+}
+
+const DrawioEditor = forwardRef<DrawioEditorRef, DrawioEditorProps>(({ value, onChange, darkMode }, ref) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
+  const [currentXml, setCurrentXml] = useState(value);
   const theme = darkMode ? 'dark' : 'atlas';
+  const { pushHistory } = useNoteAIStore();
+
+  // 暴露方法给父组件
+  useImperativeHandle(ref, () => ({
+    getSelection: () => null, // DrawIO 不支持选区
+    insertContent: (content: string) => {
+      // DrawIO 只能整体替换
+      if (content.includes('<mxGraphModel') || content.includes('<diagram')) {
+        iframeRef.current?.contentWindow?.postMessage(JSON.stringify({
+          action: 'load',
+          xml: content,
+          autosave: 1
+        }), '*');
+        setCurrentXml(content);
+        onChange(content);
+        pushHistory(content, 'ai-import');
+      }
+    },
+    replaceContent: (content: string) => {
+      let xmlContent = content;
+      // 确保是有效的XML
+      if (!content.includes('<mxGraphModel')) {
+        xmlContent = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
+      }
+      
+      iframeRef.current?.contentWindow?.postMessage(JSON.stringify({
+        action: 'load',
+        xml: xmlContent,
+        autosave: 1
+      }), '*');
+      setCurrentXml(xmlContent);
+      onChange(xmlContent);
+      pushHistory(xmlContent, 'ai-import');
+    },
+    getContent: () => currentXml,
+    getContentAsXML: () => currentXml
+  }), [currentXml, onChange, pushHistory]);
 
   // The base URL for embedding diagrams.net
   // configure=1: Sends 'configure' event
@@ -38,10 +86,12 @@ const DrawioEditor: React.FC<DrawioEditorProps> = ({ value, onChange, darkMode }
             
           case 'save':
             // Draw.io sends this when user clicks save (or autosave triggers)
+            setCurrentXml(msg.xml);
             onChange(msg.xml);
             break;
             
           case 'autosave':
+            setCurrentXml(msg.xml);
             onChange(msg.xml);
             break;
 
@@ -76,6 +126,8 @@ const DrawioEditor: React.FC<DrawioEditorProps> = ({ value, onChange, darkMode }
        />
     </div>
   );
-};
+});
 
 export default DrawioEditor;
+
+export type { DrawioEditorRef };

@@ -1,29 +1,72 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Note, NoteType } from '../types';
-import MarkdownEditor from './editors/MarkdownEditor';
-import RichTextEditor from './editors/RichTextEditor';
-import MindMapEditor from './editors/MindMapEditor';
-import DrawioEditor from './editors/DrawioEditor';
+import MarkdownEditor, { MarkdownEditorRef } from './editors/MarkdownEditor';
+import RichTextEditor, { RichTextEditorRef } from './editors/RichTextEditor';
+import MindMapEditor, { MindMapEditorRef } from './editors/MindMapEditor';
+import DrawioEditor, { DrawioEditorRef } from './editors/DrawioEditor';
 import { useLanguageStore } from '../store/languageStore';
 import { api } from '../services/api';
+import { useNoteAIStore } from '../store/noteAIStore';
+
+// 统一编辑器Ref类型
+type EditorRefType = MarkdownEditorRef | RichTextEditorRef | MindMapEditorRef | DrawioEditorRef;
 
 interface EditorProps {
   note: Note | null;
   onUpdateNote: (updatedNote: Note) => void;
   aiPanelOpen?: boolean;
   onToggleAiPanel?: () => void;
+  // 导出编辑器ref供AI面板使用
+  onEditorRefChange?: (ref: React.RefObject<EditorRefType>) => void;
+  // 导入AI内容到编辑器的回调
+  onImportFromAI?: (content: string, mode: 'replace' | 'insert' | 'append') => void;
 }
 
-const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onToggleAiPanel }) => {
+const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onToggleAiPanel, onEditorRefChange }) => {
   const [activeMode, setActiveMode] = useState<NoteType>('Markdown');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  
+  // 导入成功提示状态
+  const [importToast, setImportToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({
+    show: false,
+    message: '',
+    type: 'success'
+  });
 
   // Local title state to prevent overwrites from API responses
   const [localTitle, setLocalTitle] = useState(note?.title || '');
 
   const { t } = useLanguageStore();
+
+  // 编辑器ref
+  const markdownEditorRef = useRef<MarkdownEditorRef>(null);
+  const richTextEditorRef = useRef<RichTextEditorRef>(null);
+  const mindMapEditorRef = useRef<MindMapEditorRef>(null);
+  const drawioEditorRef = useRef<DrawioEditorRef>(null);
+
+  // NoteAI Store
+  const { 
+    setCurrentNote, 
+    setContent: setStoreContent,
+    canUndo, 
+    canRedo, 
+    undo, 
+    redo,
+    pushHistory,
+    historyStack,
+    historyIndex,
+    selection
+  } = useNoteAIStore();
+
+  // 历史记录防抖定时器
+  const historyDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const lastHistoryContentRef = useRef<string>('');
+
+  // 笔记类型切换菜单
+  const [showTypeMenu, setShowTypeMenu] = useState(false);
+  const typeMenuRef = useRef<HTMLDivElement>(null);
 
   // Tag Menu State
   const [showTagMenu, setShowTagMenu] = useState(false);
@@ -85,8 +128,107 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
         previousMode: activeMode
       });
       setActiveMode(note.type);
+      // 同步笔记到store
+      setCurrentNote(note.id, note.type, note.content);
     }
-  }, [note?.id, note?.type]);
+  }, [note?.id, note?.type, note?.content, setCurrentNote]);
+
+  // 通知父组件当前编辑器ref变化
+  useEffect(() => {
+    if (onEditorRefChange) {
+      switch (activeMode) {
+        case 'Markdown':
+          onEditorRefChange(markdownEditorRef as React.RefObject<EditorRefType>);
+          break;
+        case 'Rich Text':
+          onEditorRefChange(richTextEditorRef as React.RefObject<EditorRefType>);
+          break;
+        case 'Mind Map':
+          onEditorRefChange(mindMapEditorRef as React.RefObject<EditorRefType>);
+          break;
+        case 'Drawio':
+          onEditorRefChange(drawioEditorRef as React.RefObject<EditorRefType>);
+          break;
+      }
+    }
+  }, [activeMode, onEditorRefChange]);
+
+  // 处理撤销操作
+  const handleUndo = useCallback(() => {
+    const content = undo();
+    if (content !== null && note) {
+      // 更新编辑器内容
+      onUpdateNote({ ...note, content });
+    }
+  }, [undo, note, onUpdateNote]);
+
+  // 处理重做操作
+  const handleRedo = useCallback(() => {
+    const content = redo();
+    if (content !== null && note) {
+      // 更新编辑器内容
+      onUpdateNote({ ...note, content });
+    }
+  }, [redo, note, onUpdateNote]);
+
+  // 显示导入提示
+  const showImportToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
+    setImportToast({ show: true, message, type });
+    // 3秒后自动隐藏
+    setTimeout(() => {
+      setImportToast({ show: false, message: '', type: 'success' });
+    }, 3000);
+  }, []);
+
+  // 处理从AI导入内容
+  const handleImportFromAI = useCallback((content: string, mode: 'replace' | 'insert' | 'append') => {
+    if (!note) return;
+
+    try {
+      // 根据编辑器类型调用对应的方法
+      switch (activeMode) {
+        case 'Markdown':
+          if (markdownEditorRef.current) {
+            if (mode === 'replace') {
+              markdownEditorRef.current.replaceContent(content);
+            } else {
+              markdownEditorRef.current.insertContent(content, mode === 'append' ? 'end' : 'cursor');
+            }
+          }
+          break;
+        case 'Rich Text':
+          if (richTextEditorRef.current) {
+            if (mode === 'replace') {
+              richTextEditorRef.current.replaceContent(content);
+            } else {
+              richTextEditorRef.current.insertContent(content, mode === 'append' ? 'end' : 'cursor');
+            }
+          }
+          break;
+        case 'Mind Map':
+          if (mindMapEditorRef.current) {
+            if (mode === 'replace') {
+              mindMapEditorRef.current.replaceContent(content);
+            } else {
+              mindMapEditorRef.current.insertContent(content, 'child');
+            }
+          }
+          break;
+        case 'Drawio':
+          if (drawioEditorRef.current) {
+            drawioEditorRef.current.replaceContent(content);
+          }
+          break;
+      }
+      
+      // 显示成功提示
+      const modeText = mode === 'replace' ? '替换' : mode === 'append' ? '追加' : '插入';
+      showImportToast(`AI内容已${modeText}到编辑器`, 'success');
+    } catch (error) {
+      console.error('导入AI内容失败:', error);
+      showImportToast('导入失败，请重试', 'error');
+    }
+  }, [activeMode, note, showImportToast]);
 
   // Clear pending updates when switching notes to avoid cross-note overwrite
   useEffect(() => {
@@ -187,11 +329,55 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
     return () => observer.disconnect();
   }, []);
 
+  // 键盘快捷键支持
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 忽略在输入框中的快捷键（让编辑器自己处理）
+      const target = e.target as HTMLElement;
+      const isInEditor = target.tagName === 'TEXTAREA' || 
+                         target.tagName === 'INPUT' || 
+                         target.isContentEditable ||
+                         target.closest('.w-md-editor') ||
+                         target.closest('.ql-editor') ||
+                         target.closest('.simple-mind-map');
+      
+      // Ctrl/Cmd + Z = 撤销
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+        // 如果不在编辑器中，使用全局撤销
+        if (!isInEditor && canUndo()) {
+          e.preventDefault();
+          handleUndo();
+        }
+      }
+      // Ctrl/Cmd + Shift + Z 或 Ctrl/Cmd + Y = 重做
+      if ((e.ctrlKey || e.metaKey) && (e.shiftKey && e.key === 'z' || e.key === 'y')) {
+        if (!isInEditor && canRedo()) {
+          e.preventDefault();
+          handleRedo();
+        }
+      }
+      
+      // Ctrl/Cmd + Shift + A = 打开/关闭 AI 面板
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        if (onToggleAiPanel) {
+          onToggleAiPanel();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [canUndo, canRedo, handleUndo, handleRedo]);
+
   // Close tag menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (tagMenuRef.current && !tagMenuRef.current.contains(event.target as Node)) {
         setShowTagMenu(false);
+      }
+      if (typeMenuRef.current && !typeMenuRef.current.contains(event.target as Node)) {
+        setShowTypeMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -233,6 +419,20 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
       oldContentLength: note?.content?.length || 0
     });
     debouncedUpdate({ content: newContent });
+    
+    // 更新Store中的内容（用于选区同步等）
+    setStoreContent(newContent, 'user');
+    
+    // 防抖推入历史（每5秒最多推入一次）
+    if (historyDebounceRef.current) {
+      clearTimeout(historyDebounceRef.current);
+    }
+    historyDebounceRef.current = setTimeout(() => {
+      if (newContent !== lastHistoryContentRef.current && newContent.length > 0) {
+        pushHistory(newContent, 'user');
+        lastHistoryContentRef.current = newContent;
+      }
+    }, 5000);
   };
 
   const handleAddTag = (tag: string) => {
@@ -280,13 +480,13 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
   const renderEditor = () => {
     switch (activeMode) {
       case 'Markdown':
-        return <MarkdownEditor key={note.id} value={note.content} onChange={handleContentChange} darkMode={isDarkMode} />;
+        return <MarkdownEditor ref={markdownEditorRef} key={note.id} value={note.content} onChange={handleContentChange} darkMode={isDarkMode} />;
       case 'Rich Text':
-        return <RichTextEditor key={note.id} value={note.content} onChange={handleContentChange} />;
+        return <RichTextEditor ref={richTextEditorRef} key={note.id} value={note.content} onChange={handleContentChange} />;
       case 'Mind Map':
-        return <MindMapEditor key={note.id} value={note.content} onChange={handleContentChange} darkMode={isDarkMode} />;
+        return <MindMapEditor ref={mindMapEditorRef} key={note.id} value={note.content} onChange={handleContentChange} darkMode={isDarkMode} />;
       case 'Drawio':
-        return <DrawioEditor key={note.id} value={note.content} onChange={handleContentChange} darkMode={isDarkMode} />;
+        return <DrawioEditor ref={drawioEditorRef} key={note.id} value={note.content} onChange={handleContentChange} darkMode={isDarkMode} />;
       default:
         return <div>Unknown Editor Type</div>;
     }
@@ -301,17 +501,63 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
           </button>
           
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className={`shrink-0 p-1.5 rounded-lg flex items-center justify-center ${
-              note.type === 'Markdown' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' :
-              note.type === 'Rich Text' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' :
-              note.type === 'Mind Map' ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400' :
-              'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
-            }`}>
-              <span className="material-symbols-outlined text-[18px]">
-                {note.type === 'Markdown' ? 'markdown' : 
-                 note.type === 'Rich Text' ? 'format_size' : 
-                 note.type === 'Mind Map' ? 'account_tree' : 'draw'}
-              </span>
+            {/* 笔记类型选择器 */}
+            <div className="relative" ref={typeMenuRef}>
+              <button
+                onClick={() => setShowTypeMenu(!showTypeMenu)}
+                className={`shrink-0 p-1.5 rounded-lg flex items-center justify-center gap-1 transition-all hover:scale-105 ${
+                  note.type === 'Markdown' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' :
+                  note.type === 'Rich Text' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                  note.type === 'Mind Map' ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400' :
+                  'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
+                }`}
+                title="点击切换笔记类型"
+              >
+                <span className="material-symbols-outlined text-[18px]">
+                  {note.type === 'Markdown' ? 'markdown' : 
+                   note.type === 'Rich Text' ? 'format_size' : 
+                   note.type === 'Mind Map' ? 'account_tree' : 'draw'}
+                </span>
+                <span className="material-symbols-outlined text-[12px]">expand_more</span>
+              </button>
+              
+              {/* 类型切换下拉菜单 */}
+              {showTypeMenu && (
+                <div className="absolute top-full left-0 mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 min-w-[150px] z-50">
+                  {(['Markdown', 'Rich Text', 'Mind Map', 'Drawio'] as NoteType[]).map((type) => (
+                    <button
+                      key={type}
+                      onClick={() => {
+                        if (type !== note.type) {
+                          onUpdateNote({ ...note, type });
+                          setActiveMode(type);
+                        }
+                        setShowTypeMenu(false);
+                      }}
+                      className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-colors ${
+                        type === note.type
+                          ? 'bg-primary/10 text-primary'
+                          : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                      }`}
+                    >
+                      <span className={`material-symbols-outlined text-[16px] ${
+                        type === 'Markdown' ? 'text-blue-500' :
+                        type === 'Rich Text' ? 'text-emerald-500' :
+                        type === 'Mind Map' ? 'text-purple-500' :
+                        'text-orange-500'
+                      }`}>
+                        {type === 'Markdown' ? 'markdown' : 
+                         type === 'Rich Text' ? 'format_size' : 
+                         type === 'Mind Map' ? 'account_tree' : 'draw'}
+                      </span>
+                      <span>{type === 'Drawio' ? '流程图' : type === 'Mind Map' ? '思维导图' : type === 'Rich Text' ? '富文本' : 'Markdown'}</span>
+                      {type === note.type && (
+                        <span className="material-symbols-outlined text-[14px] ml-auto">check</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
              <input
                className="w-full max-w-md text-xl font-bold bg-transparent border-none focus:ring-0 text-gray-900 dark:text-white p-0 placeholder-gray-300 truncate"
@@ -323,6 +569,49 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
         </div>
         
         <div className="flex items-center gap-3 shrink-0 ml-4">
+          {/* 撤销/重做按钮 */}
+          <div className="flex items-center gap-1 border-r border-gray-200 dark:border-gray-700 pr-3">
+            <button
+              onClick={handleUndo}
+              disabled={!canUndo()}
+              className={`p-1.5 rounded-lg transition-colors ${
+                canUndo()
+                  ? 'text-gray-600 dark:text-gray-400 hover:text-primary hover:bg-primary/10'
+                  : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
+              }`}
+              title="撤销 (Ctrl+Z)"
+            >
+              <span className="material-symbols-outlined text-[18px]">undo</span>
+            </button>
+            {/* 历史记录计数指示器 */}
+            <span 
+              className="text-[10px] text-gray-400 dark:text-gray-500 min-w-[24px] text-center"
+              title={`当前: ${historyIndex + 1} / 总共: ${historyStack.length}`}
+            >
+              {historyIndex + 1}/{historyStack.length}
+            </span>
+            <button
+              onClick={handleRedo}
+              disabled={!canRedo()}
+              className={`p-1.5 rounded-lg transition-colors ${
+                canRedo()
+                  ? 'text-gray-600 dark:text-gray-400 hover:text-primary hover:bg-primary/10'
+                  : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
+              }`}
+              title="重做 (Ctrl+Y)"
+            >
+              <span className="material-symbols-outlined text-[18px]">redo</span>
+            </button>
+          </div>
+
+          {/* 选中状态指示器 */}
+          {selection?.text && (
+            <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg text-[10px] font-medium border border-emerald-200 dark:border-emerald-800">
+              <span className="material-symbols-outlined text-[12px]">select_all</span>
+              <span>已选中 {selection.text.length} 字符</span>
+            </div>
+          )}
+
           {/* Save Status Indicator */}
           <div className={`flex items-center gap-1.5 text-xs transition-colors ${
             isSaving ? 'text-yellow-500' : 'text-green-500'
@@ -491,6 +780,84 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
           </div>
         </div>
       </div>
+
+      {/* 底部状态栏 */}
+      <div className="h-6 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-[#15232a] flex items-center justify-between px-4 text-[10px] text-gray-400 dark:text-gray-500">
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1">
+            <span className="material-symbols-outlined text-[10px]">text_snippet</span>
+            {note.content.length} 字符
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="material-symbols-outlined text-[10px]">format_list_numbered</span>
+            {note.content.split('\n').length} 行
+          </span>
+          {note.content.trim() && (
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-[10px]">short_text</span>
+              约 {Math.ceil(note.content.length / 500)} 分钟阅读
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {activeMode === 'Markdown' && (
+            <span className="text-blue-500">Markdown</span>
+          )}
+          {activeMode === 'Rich Text' && (
+            <span className="text-emerald-500">富文本</span>
+          )}
+          {activeMode === 'Mind Map' && (
+            <span className="text-purple-500">思维导图</span>
+          )}
+          {activeMode === 'Drawio' && (
+            <span className="text-orange-500">流程图</span>
+          )}
+          {aiPanelOpen && (
+            <span className="flex items-center gap-1 text-primary">
+              <span className="material-symbols-outlined text-[10px]">auto_awesome</span>
+              AI 已启用
+            </span>
+          )}
+          {/* 快捷键提示 */}
+          <span className="hidden lg:flex items-center gap-1 text-gray-400" title="快捷键">
+            <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-[8px]">⌘⇧A</kbd>
+            <span>AI</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Toast 提示 */}
+      {importToast.show && (
+        <div 
+          className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 ${
+            importToast.type === 'success' 
+              ? 'bg-green-500 text-white' 
+              : 'bg-red-500 text-white'
+          }`}
+          style={{
+            animation: 'fadeInUp 0.3s ease-out'
+          }}
+        >
+          <span className="material-symbols-outlined text-[18px]">
+            {importToast.type === 'success' ? 'check_circle' : 'error'}
+          </span>
+          <span className="text-sm font-medium">{importToast.message}</span>
+        </div>
+      )}
+      
+      {/* 动画样式 */}
+      <style>{`
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateX(-50%) translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+          }
+        }
+      `}</style>
     </main>
   );
 };

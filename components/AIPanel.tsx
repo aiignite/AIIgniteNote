@@ -5,11 +5,16 @@ import { Note, ChatMessage } from '../types';
 import { api } from '../services/api';
 import { indexedDB, STORES } from '../services/indexedDB';
 import { useLanguageStore } from '../store/languageStore';
+import { useNoteAIStore, convertAIResponseForEditor } from '../store/noteAIStore';
 
 interface AIPanelProps {
   activeNote: Note | null;
   onClose: () => void;
   width?: number;
+  // 编辑器ref，用于导入AI生成的内容
+  editorRef?: React.RefObject<any>;
+  // 导入内容到编辑器的回调
+  onImportToEditor?: (content: string, mode: 'replace' | 'insert' | 'append') => void;
 }
 
 // AI Providers - Must match backend/src/types/index.ts
@@ -45,8 +50,22 @@ interface AIAttachment {
   mimeType?: string;
 }
 
-const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
+const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef, onImportToEditor }) => {
   const { t } = useLanguageStore();
+  const { 
+    selection, 
+    getContentForAI, 
+    getSelectionForAI,
+    currentNoteType,
+    pushHistory,
+    aiResponseHistory,
+    showResponseHistory,
+    setShowResponseHistory,
+    addResponseToHistory,
+    removeFromHistory,
+    clearResponseHistory,
+    markAsImported
+  } = useNoteAIStore();
 
   const AI_PROVIDER_ICON_MAP: Record<string, string> = {
     GEMINI: 'auto_awesome',
@@ -131,6 +150,11 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
   const [selectedConversationForTag, setSelectedConversationForTag] = useState<string | null>(null);
   const [favoriteMessages, setFavoriteMessages] = useState<Set<string>>(new Set());
 
+  // AI内容导入预览状态
+  const [showImportPreview, setShowImportPreview] = useState(false);
+  const [previewContent, setPreviewContent] = useState('');
+  const [previewMode, setPreviewMode] = useState<'replace' | 'insert' | 'append'>('append');
+
   // Custom prompts management
   interface CustomPrompt {
     id: string;
@@ -149,6 +173,9 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
 
   // Streaming preferences
   const [useStreaming, setUseStreaming] = useState(true);
+
+  // AI上下文增强模式
+  const [enhanceContext, setEnhanceContext] = useState(true);
 
   // Data management
   const [showDataMenu, setShowDataMenu] = useState(false);
@@ -420,6 +447,169 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
     { text: '用简单的话解释', label: '简化说明' },
     { text: '总结关键点', label: '总结要点' },
   ];
+
+  // 计算笔记内容统计信息
+  const noteStats = useMemo(() => {
+    if (!activeNote?.content) return null;
+    
+    const content = activeNote.content;
+    const charCount = content.length;
+    const wordCount = content.trim().split(/\s+/).filter(Boolean).length;
+    const lineCount = content.split('\n').length;
+    
+    // 根据笔记类型计算特定统计
+    let typeSpecific: { label: string; value: string | number }[] = [];
+    
+    switch (activeNote.type) {
+      case 'Markdown':
+        // 计算标题数、代码块数
+        const headings = (content.match(/^#{1,6}\s/gm) || []).length;
+        const codeBlocks = (content.match(/```/g) || []).length / 2;
+        const links = (content.match(/\[.*?\]\(.*?\)/g) || []).length;
+        typeSpecific = [
+          { label: '标题', value: headings },
+          { label: '代码块', value: Math.floor(codeBlocks) },
+          { label: '链接', value: links },
+        ];
+        break;
+      case 'Mind Map':
+        try {
+          const data = JSON.parse(content);
+          // 计算节点数（递归计算）
+          const countNodes = (node: any): number => {
+            let count = 1;
+            if (node.children) {
+              for (const child of node.children) {
+                count += countNodes(child);
+              }
+            }
+            return count;
+          };
+          const nodeCount = data.data ? countNodes(data.data) : 0;
+          const maxDepth = (node: any, depth = 1): number => {
+            if (!node.children || node.children.length === 0) return depth;
+            return Math.max(...node.children.map((c: any) => maxDepth(c, depth + 1)));
+          };
+          const depth = data.data ? maxDepth(data.data) : 0;
+          typeSpecific = [
+            { label: '节点数', value: nodeCount },
+            { label: '最大深度', value: depth },
+          ];
+        } catch {
+          typeSpecific = [{ label: '格式', value: 'JSON' }];
+        }
+        break;
+      case 'Drawio':
+        const cellCount = (content.match(/<mxCell/g) || []).length;
+        const connections = (content.match(/edge="1"/g) || []).length;
+        typeSpecific = [
+          { label: '元素', value: cellCount },
+          { label: '连接', value: connections },
+        ];
+        break;
+      default:
+        break;
+    }
+    
+    return {
+      charCount,
+      wordCount,
+      lineCount,
+      typeSpecific,
+    };
+  }, [activeNote?.content, activeNote?.type]);
+
+  // 发送笔记内容给AI
+  const handleSendNoteContent = useCallback(() => {
+    if (!activeNote?.content) return;
+    
+    const { content, format, noteType } = getContentForAI();
+    let prompt = '';
+    
+    // 构建上下文信息
+    let contextInfo = '';
+    if (enhanceContext && activeNote) {
+      const noteTitle = activeNote.title || '无标题';
+      const charCount = activeNote.content.length;
+      const typeLabel = noteType === 'Markdown' ? 'Markdown笔记' :
+                       noteType === 'Rich Text' ? '富文本笔记' :
+                       noteType === 'Mind Map' ? '思维导图' : '流程图';
+      
+      contextInfo = `【笔记信息】\n- 标题: ${noteTitle}\n- 类型: ${typeLabel}\n- 字符数: ${charCount}\n\n`;
+    }
+    
+    switch (noteType) {
+      case 'Markdown':
+        prompt = `${contextInfo}请帮我分析和优化以下Markdown笔记内容：\n\n${content}`;
+        break;
+      case 'Rich Text':
+        prompt = `${contextInfo}请帮我分析以下富文本笔记内容：\n\n${content}`;
+        break;
+      case 'Mind Map':
+        prompt = `${contextInfo}以下是一个思维导图的JSON数据结构，请帮我分析并提供建议：\n\n\`\`\`json\n${content}\n\`\`\``;
+        break;
+      case 'Drawio':
+        prompt = `${contextInfo}以下是一个Draw.io流程图的XML数据，请帮我理解这个图表的结构：\n\n\`\`\`xml\n${content}\n\`\`\``;
+        break;
+      default:
+        prompt = `${contextInfo}请帮我分析以下内容：\n\n${content}`;
+    }
+    
+    setInput(prompt);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [activeNote, getContentForAI, enhanceContext]);
+
+  // 发送选中内容给AI
+  const handleSendSelection = useCallback(() => {
+    const selectionData = getSelectionForAI();
+    if (!selectionData) {
+      alert('请先在编辑器中选择一些内容');
+      return;
+    }
+    
+    // 构建上下文信息
+    let contextInfo = '';
+    if (enhanceContext && activeNote) {
+      const noteTitle = activeNote.title || '无标题';
+      const typeLabel = currentNoteType === 'Markdown' ? 'Markdown笔记' :
+                       currentNoteType === 'Rich Text' ? '富文本笔记' :
+                       currentNoteType === 'Mind Map' ? '思维导图' : '流程图';
+      
+      contextInfo = `【上下文】来自"${noteTitle}"(${typeLabel})中的选中内容\n\n`;
+    }
+    
+    const prompt = `${contextInfo}请帮我处理以下选中的内容：\n\n${selectionData.content}`;
+    setInput(prompt);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [getSelectionForAI, enhanceContext, activeNote, currentNoteType]);
+
+  // 打开导入预览弹窗
+  const handleImportToEditorClick = useCallback((content: string, mode: 'replace' | 'insert' | 'append' = 'append') => {
+    // 根据笔记类型转换内容
+    const convertedContent = currentNoteType 
+      ? convertAIResponseForEditor(content, currentNoteType)
+      : content;
+    
+    setPreviewContent(convertedContent);
+    setPreviewMode(mode);
+    setShowImportPreview(true);
+  }, [currentNoteType]);
+
+  // 确认导入内容
+  const handleConfirmImport = useCallback(() => {
+    if (!onImportToEditor) {
+      console.warn('onImportToEditor callback not provided');
+      return;
+    }
+    
+    onImportToEditor(previewContent, previewMode);
+    setShowImportPreview(false);
+    setPreviewContent('');
+  }, [onImportToEditor, previewContent, previewMode]);
 
   // Handle reply to message
   const handleReplyTo = useCallback((messageIndex: number) => {
@@ -1220,6 +1410,11 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
             }
           });
 
+          // 保存AI响应到历史记录
+          if (fullText && fullText.trim()) {
+            addResponseToHistory(fullText);
+          }
+
           // Update or create conversation
           if (!currentConversationId) {
             // The API should have created a new conversation
@@ -1371,6 +1566,11 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
               return newMessages;
             });
           });
+
+          // 保存AI响应到历史记录
+          if (fullText && fullText.trim()) {
+            addResponseToHistory(fullText);
+          }
 
           await loadConversations();
         }
@@ -1832,48 +2032,175 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
     );
   };
 
-  const smartActions = [
-    {
-      label: 'Summarize',
-      icon: 'summarize',
-      prompt: activeNote?.content
-        ? 'Summarize the key points from this note in a concise format'
-        : 'Help me create a summary for my notes'
-    },
-    {
-      label: 'Improve Writing',
-      icon: 'edit_note',
-      prompt: activeNote?.content
-        ? 'Review and improve the writing in this note: fix grammar, enhance clarity, and suggest better phrasing'
-        : 'Help me improve my writing style'
-    },
-    {
-      label: 'Generate Ideas',
-      icon: 'lightbulb',
-      prompt: activeNote?.content
-        ? 'Based on this note, generate 5 creative ideas or next steps I should consider'
-        : 'Give me some creative ideas for my project'
-    },
-    {
-      label: 'Action Items',
-      icon: 'checklist',
-      prompt: activeNote?.content
-        ? 'Extract all action items, tasks, and to-dos from this note and organize them by priority'
-        : 'Help me create a checklist of tasks'
-    },
-    {
-      label: 'Explain Code',
-      icon: 'code',
-      prompt: activeNote?.content
-        ? 'Analyze the code in this note, explain how it works, and suggest improvements'
-        : 'Help me understand some code'
-    },
-    {
-      label: 'Q&A',
-      icon: 'question_answer',
-      prompt: 'Ask me 3 relevant questions about this content to help me think deeper'
-    },
-  ];
+  // 根据笔记类型生成特定的快捷操作
+  const getNoteTypeSpecificActions = useMemo(() => {
+    const baseActions = [
+      {
+        label: 'Summarize',
+        icon: 'summarize',
+        prompt: activeNote?.content
+          ? 'Summarize the key points from this note in a concise format'
+          : 'Help me create a summary for my notes'
+      },
+      {
+        label: 'Improve Writing',
+        icon: 'edit_note',
+        prompt: activeNote?.content
+          ? 'Review and improve the writing in this note: fix grammar, enhance clarity, and suggest better phrasing'
+          : 'Help me improve my writing style'
+      },
+    ];
+
+    // 根据笔记类型添加特定操作
+    switch (currentNoteType) {
+      case 'Markdown':
+        return [
+          ...baseActions,
+          {
+            label: '续写内容',
+            icon: 'auto_fix_high',
+            prompt: activeNote?.content
+              ? '请基于笔记的内容和风格，续写以下内容，保持一致的写作风格：\n\n' + (selection?.text || activeNote.content.slice(-500))
+              : '帮我续写这段内容'
+          },
+          {
+            label: '生成目录',
+            icon: 'toc',
+            prompt: activeNote?.content
+              ? '请为这篇文档生成一个Markdown格式的目录（Table of Contents）'
+              : '帮我创建目录结构'
+          },
+          {
+            label: '格式化代码',
+            icon: 'code',
+            prompt: activeNote?.content
+              ? '请检查并格式化这篇笔记中的代码块，确保语法正确并添加适当的注释'
+              : '帮我格式化代码'
+          },
+          {
+            label: '添加注释',
+            icon: 'comment',
+            prompt: selection?.text
+              ? '请为以下内容添加详细的解释和注释：\n\n' + selection.text
+              : '帮我为选中的内容添加注释'
+          },
+        ];
+      case 'Rich Text':
+        return [
+          ...baseActions,
+          {
+            label: '美化格式',
+            icon: 'format_paint',
+            prompt: activeNote?.content
+              ? '请帮我优化这篇富文本文档的格式，使其更加清晰易读，添加适当的标题、列表和重点标注'
+              : '帮我美化文档格式'
+          },
+          {
+            label: '转Markdown',
+            icon: 'markdown',
+            prompt: activeNote?.content
+              ? '请将这篇富文本内容转换为规范的Markdown格式'
+              : '帮我转换为Markdown'
+          },
+          {
+            label: '生成要点',
+            icon: 'format_list_bulleted',
+            prompt: activeNote?.content
+              ? '请将这篇文档的主要内容整理成简洁的要点列表'
+              : '帮我提取要点'
+          },
+        ];
+      case 'Mind Map':
+        return [
+          {
+            label: '扩展节点',
+            icon: 'add_circle',
+            prompt: selection?.text
+              ? `请为思维导图的"${selection.text}"节点生成5-8个相关的子节点建议，以JSON数组格式返回：["子节点1", "子节点2", ...]`
+              : '请帮我扩展思维导图的选中节点'
+          },
+          {
+            label: '优化结构',
+            icon: 'account_tree',
+            prompt: activeNote?.content
+              ? '请分析这个思维导图的JSON结构，并建议如何优化其层级和组织方式'
+              : '帮我优化思维导图结构'
+          },
+          {
+            label: '生成摘要',
+            icon: 'description',
+            prompt: activeNote?.content
+              ? '请根据这个思维导图的内容，生成一篇结构化的文字摘要'
+              : '帮我将思维导图转为文字'
+          },
+          {
+            label: '补充分支',
+            icon: 'mediation',
+            prompt: activeNote?.content
+              ? '请分析这个思维导图，找出可能遗漏的重要分支，并建议补充内容'
+              : '帮我补充思维导图'
+          },
+          {
+            label: '重新组织',
+            icon: 'swap_horiz',
+            prompt: activeNote?.content
+              ? '请帮我重新组织这个思维导图的结构，使其更加逻辑清晰'
+              : '帮我重组思维导图'
+          },
+        ];
+      case 'Drawio':
+        return [
+          {
+            label: '分析流程',
+            icon: 'analytics',
+            prompt: activeNote?.content
+              ? '请分析这个流程图的XML结构，解读其中的流程逻辑和各节点之间的关系'
+              : '帮我分析流程图'
+          },
+          {
+            label: '优化流程',
+            icon: 'auto_fix',
+            prompt: activeNote?.content
+              ? '请分析这个流程图，并提出优化建议：简化步骤、合并重复环节、改进流程效率'
+              : '帮我优化流程设计'
+          },
+          {
+            label: '生成说明',
+            icon: 'article',
+            prompt: activeNote?.content
+              ? '请根据这个流程图生成详细的文字说明文档，描述每个步骤和决策点'
+              : '帮我生成流程说明'
+          },
+          {
+            label: '检查完整性',
+            icon: 'fact_check',
+            prompt: activeNote?.content
+              ? '请检查这个流程图的完整性：是否有遗漏的分支、死循环、或缺少的条件判断'
+              : '帮我检查流程图'
+          },
+        ];
+      default:
+        return [
+          ...baseActions,
+          {
+            label: 'Generate Ideas',
+            icon: 'lightbulb',
+            prompt: activeNote?.content
+              ? 'Based on this note, generate 5 creative ideas or next steps I should consider'
+              : 'Give me some creative ideas for my project'
+          },
+          {
+            label: 'Action Items',
+            icon: 'checklist',
+            prompt: activeNote?.content
+              ? 'Extract all action items, tasks, and to-dos from this note and organize them by priority'
+              : 'Help me create a checklist of tasks'
+          },
+        ];
+    }
+  }, [activeNote?.content, currentNoteType, selection?.text]);
+
+  const smartActions = getNoteTypeSpecificActions;
 
   const handleSmartAction = (action: typeof smartActions[0]) => {
     setInput(action.prompt);
@@ -2196,6 +2523,75 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
                           >
                             <span className="material-symbols-outlined text-[12px]">thumb_down</span>
                           </button>
+                          {/* 导入到编辑器按钮 */}
+                          {onImportToEditor && activeNote && (
+                            <div className="relative group/import">
+                              <button
+                                onClick={() => handleImportToEditorClick(msg.text, 'append')}
+                                className="p-0.5 rounded transition-colors text-gray-400 hover:text-primary hover:bg-primary/10"
+                                title="导入到编辑器"
+                              >
+                                <span className="material-symbols-outlined text-[12px]">download</span>
+                              </button>
+                              {/* 导入选项下拉菜单 */}
+                              <div className="absolute bottom-full right-0 mb-1 hidden group-hover/import:block z-20">
+                                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 min-w-[100px]">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleImportToEditorClick(msg.text, 'append');
+                                    }}
+                                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                                  >
+                                    <span className="material-symbols-outlined text-[12px]">add</span>
+                                    追加
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleImportToEditorClick(msg.text, 'insert');
+                                    }}
+                                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                                  >
+                                    <span className="material-symbols-outlined text-[12px]">input</span>
+                                    插入
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleImportToEditorClick(msg.text, 'replace');
+                                    }}
+                                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 text-orange-500"
+                                  >
+                                    <span className="material-symbols-outlined text-[12px]">sync_alt</span>
+                                    替换全部
+                                  </button>
+                                  {/* 应用到选中区域 */}
+                                  {selection?.text && (
+                                    <>
+                                      <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          // 直接替换选中内容
+                                          if (editorRef?.current && editorRef.current.replaceContent) {
+                                            const convertedContent = currentNoteType 
+                                              ? convertAIResponseForEditor(msg.text, currentNoteType)
+                                              : msg.text;
+                                            editorRef.current.replaceContent(convertedContent);
+                                          }
+                                        }}
+                                        className="w-full px-3 py-1.5 text-xs text-left hover:bg-emerald-50 dark:hover:bg-emerald-900/20 flex items-center gap-2 text-emerald-600 dark:text-emerald-400"
+                                      >
+                                        <span className="material-symbols-outlined text-[12px]">auto_fix_high</span>
+                                        应用到选中区域
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2221,7 +2617,240 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
 
       {/* Smart Actions */}
       <div className="px-4 py-2 border-t border-gray-100 dark:border-gray-800">
-        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2">Quick Actions</p>
+        {/* 笔记内容交互按钮 */}
+        {activeNote && (
+          <div className="mb-2 pb-2 border-b border-gray-100 dark:border-gray-800">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[9px] font-bold text-primary/70 uppercase tracking-widest">笔记内容</p>
+              {/* 笔记统计信息 */}
+              {noteStats && (
+                <div className="flex items-center gap-2 text-[8px] text-gray-400">
+                  <span>{noteStats.charCount} 字</span>
+                  <span>•</span>
+                  <span>{noteStats.lineCount} 行</span>
+                  {noteStats.typeSpecific.map((stat, idx) => (
+                    <React.Fragment key={stat.label}>
+                      <span>•</span>
+                      <span>{stat.value} {stat.label}</span>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={handleSendNoteContent}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[10px] font-medium transition-colors border border-primary/20"
+                title="发送整个笔记内容给AI分析"
+              >
+                <span className="material-symbols-outlined text-[12px]">description</span>
+                <span>发送笔记内容</span>
+              </button>
+              <button
+                onClick={handleSendSelection}
+                disabled={!selection?.text}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium transition-colors border ${
+                  selection?.text
+                    ? 'bg-emerald-100 dark:bg-emerald-900/30 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-400 border-gray-200 dark:border-gray-700 cursor-not-allowed'
+                }`}
+                title={selection?.text ? '发送选中内容给AI处理' : '请先在编辑器中选择内容'}
+              >
+                <span className="material-symbols-outlined text-[12px]">select_all</span>
+                <span>发送选中内容</span>
+              </button>
+            </div>
+            
+            {/* 选中内容预览卡片 */}
+            {selection?.text && (
+              <div className="mt-2 p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[10px]">format_quote</span>
+                    选中内容预览
+                    <span className="px-1 py-0.5 bg-emerald-200 dark:bg-emerald-800 rounded text-[8px]">
+                      {selection.text.length} 字符
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => {
+                      // 清除选中
+                      useNoteAIStore.getState().setSelection('', 0, 0);
+                    }}
+                    className="text-[8px] text-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-300"
+                    title="清除选中"
+                  >
+                    <span className="material-symbols-outlined text-[10px]">close</span>
+                  </button>
+                </div>
+                <p className="text-[10px] text-emerald-700 dark:text-emerald-300 line-clamp-2 whitespace-pre-wrap mb-2">
+                  {selection.text.length > 150 ? selection.text.slice(0, 150) + '...' : selection.text}
+                </p>
+                {/* 快速提问按钮 */}
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    onClick={() => {
+                      setInput(`请解释以下内容：\n\n${selection.text}`);
+                      if (textareaRef.current) textareaRef.current.focus();
+                    }}
+                    className="px-2 py-0.5 text-[8px] bg-emerald-100 dark:bg-emerald-800/50 hover:bg-emerald-200 dark:hover:bg-emerald-700 text-emerald-700 dark:text-emerald-300 rounded transition-colors"
+                  >
+                    解释
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInput(`请翻译以下内容：\n\n${selection.text}`);
+                      if (textareaRef.current) textareaRef.current.focus();
+                    }}
+                    className="px-2 py-0.5 text-[8px] bg-emerald-100 dark:bg-emerald-800/50 hover:bg-emerald-200 dark:hover:bg-emerald-700 text-emerald-700 dark:text-emerald-300 rounded transition-colors"
+                  >
+                    翻译
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInput(`请改写以下内容，使其更加专业：\n\n${selection.text}`);
+                      if (textareaRef.current) textareaRef.current.focus();
+                    }}
+                    className="px-2 py-0.5 text-[8px] bg-emerald-100 dark:bg-emerald-800/50 hover:bg-emerald-200 dark:hover:bg-emerald-700 text-emerald-700 dark:text-emerald-300 rounded transition-colors"
+                  >
+                    改写
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInput(`请总结以下内容的要点：\n\n${selection.text}`);
+                      if (textareaRef.current) textareaRef.current.focus();
+                    }}
+                    className="px-2 py-0.5 text-[8px] bg-emerald-100 dark:bg-emerald-800/50 hover:bg-emerald-200 dark:hover:bg-emerald-700 text-emerald-700 dark:text-emerald-300 rounded transition-colors"
+                  >
+                    总结
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInput(`请扩展以下内容，添加更多细节：\n\n${selection.text}`);
+                      if (textareaRef.current) textareaRef.current.focus();
+                    }}
+                    className="px-2 py-0.5 text-[8px] bg-emerald-100 dark:bg-emerald-800/50 hover:bg-emerald-200 dark:hover:bg-emerald-700 text-emerald-700 dark:text-emerald-300 rounded transition-colors"
+                  >
+                    扩展
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* AI响应历史面板 */}
+        {aiResponseHistory.length > 0 && (
+          <div className="mb-3">
+            <button
+              onClick={() => setShowResponseHistory(!showResponseHistory)}
+              className="w-full flex items-center justify-between text-[9px] font-bold text-gray-400 uppercase tracking-widest hover:text-gray-600 dark:hover:text-gray-300 transition-colors py-1"
+            >
+              <span className="flex items-center gap-1">
+                <span className="material-symbols-outlined text-[12px]">history</span>
+                AI响应历史
+                <span className="px-1.5 py-0.5 text-[8px] bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 rounded-full font-normal">
+                  {aiResponseHistory.length}
+                </span>
+              </span>
+              <span className={`material-symbols-outlined text-[14px] transition-transform ${showResponseHistory ? 'rotate-180' : ''}`}>
+                expand_more
+              </span>
+            </button>
+            
+            {showResponseHistory && (
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center justify-end">
+                  <button
+                    onClick={() => clearResponseHistory()}
+                    className="text-[8px] text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 flex items-center gap-0.5"
+                  >
+                    <span className="material-symbols-outlined text-[10px]">delete_sweep</span>
+                    清空历史
+                  </button>
+                </div>
+                
+                {aiResponseHistory.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`p-2 rounded-lg border transition-all ${
+                      item.imported 
+                        ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800' 
+                        : 'bg-violet-50 dark:bg-violet-900/10 border-violet-200 dark:border-violet-800'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[8px] text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[10px]">schedule</span>
+                        {new Date(item.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                        {item.imported && (
+                          <span className="ml-1 px-1 py-0.5 text-[7px] bg-green-200 dark:bg-green-800 text-green-700 dark:text-green-300 rounded">
+                            已导入
+                          </span>
+                        )}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            // 重新导入
+                            setPreviewContent(item.content);
+                            setPreviewMode('append');
+                            setShowImportPreview(true);
+                            markAsImported(item.id);
+                          }}
+                          className="p-1 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-800/50 rounded transition-colors"
+                          title="导入到编辑器"
+                        >
+                          <span className="material-symbols-outlined text-[12px]">input</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(item.content);
+                            // 简单的复制成功提示
+                            const btn = document.activeElement as HTMLButtonElement;
+                            if (btn) {
+                              const original = btn.innerHTML;
+                              btn.innerHTML = '<span class="material-symbols-outlined text-[12px]">check</span>';
+                              setTimeout(() => { btn.innerHTML = original; }, 1000);
+                            }
+                          }}
+                          className="p-1 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                          title="复制内容"
+                        >
+                          <span className="material-symbols-outlined text-[12px]">content_copy</span>
+                        </button>
+                        <button
+                          onClick={() => removeFromHistory(item.id)}
+                          className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors"
+                          title="删除"
+                        >
+                          <span className="material-symbols-outlined text-[12px]">close</span>
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-gray-700 dark:text-gray-300 line-clamp-3 whitespace-pre-wrap">
+                      {item.preview}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        
+        <div className="flex items-center gap-2 mb-2">
+          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Quick Actions</p>
+          {currentNoteType && (
+            <span className={`px-1.5 py-0.5 text-[8px] font-medium rounded ${
+              currentNoteType === 'Markdown' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' :
+              currentNoteType === 'Rich Text' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' :
+              currentNoteType === 'Mind Map' ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400' :
+              'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
+            }`}>
+              {currentNoteType}
+            </span>
+          )}
+        </div>
         <div className="flex flex-wrap gap-1.5">
           {smartActions.map(action => (
             <button
@@ -2718,6 +3347,122 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width }) => {
           <span>Ctrl+R regenerate</span>
         </div>
       </div>
+
+      {/* 导入预览模态框 */}
+      {showImportPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col m-4">
+            {/* 模态框头部 */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-primary">preview</span>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">预览导入内容</h3>
+                {currentNoteType && (
+                  <span className={`px-2 py-0.5 text-xs font-medium rounded ${
+                    currentNoteType === 'Markdown' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' :
+                    currentNoteType === 'Rich Text' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                    currentNoteType === 'Mind Map' ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400' :
+                    'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
+                  }`}>
+                    {currentNoteType}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowImportPreview(false)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                <span className="material-symbols-outlined text-gray-500">close</span>
+              </button>
+            </div>
+
+            {/* 导入模式选择 */}
+            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">导入方式</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPreviewMode('append')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                    previewMode === 'append'
+                      ? 'bg-primary text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:border-primary'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[14px]">add</span>
+                  追加到末尾
+                </button>
+                <button
+                  onClick={() => setPreviewMode('insert')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                    previewMode === 'insert'
+                      ? 'bg-primary text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:border-primary'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[14px]">input</span>
+                  插入到光标
+                </button>
+                <button
+                  onClick={() => setPreviewMode('replace')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                    previewMode === 'replace'
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:border-orange-500'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[14px]">sync_alt</span>
+                  替换全部
+                </button>
+              </div>
+            </div>
+
+            {/* 内容编辑区域 */}
+            <div className="flex-1 overflow-auto p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[12px]">edit</span>
+                  可直接编辑内容后导入
+                </p>
+                <button
+                  onClick={() => setPreviewContent(previewContent.trim())}
+                  className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex items-center gap-1"
+                  title="去除首尾空白"
+                >
+                  <span className="material-symbols-outlined text-[12px]">format_clear</span>
+                  去除空白
+                </button>
+              </div>
+              <textarea
+                value={previewContent}
+                onChange={(e) => setPreviewContent(e.target.value)}
+                className="w-full h-[300px] p-4 text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg font-mono resize-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                placeholder="将要导入的内容..."
+              />
+              <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
+                <span>内容长度: {previewContent.length} 字符</span>
+                <span>行数: {previewContent.split('\n').length}</span>
+              </div>
+            </div>
+
+            {/* 模态框底部 */}
+            <div className="flex items-center justify-end gap-3 p-4 border-t border-gray-200 dark:border-gray-700">
+              <button
+                onClick={() => setShowImportPreview(false)}
+                className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmImport}
+                className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                <span className="material-symbols-outlined text-[16px]">download</span>
+                确认导入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 };

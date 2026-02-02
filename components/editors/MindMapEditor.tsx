@@ -1,10 +1,21 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import 'simple-mind-map/dist/simpleMindMap.esm.css';
+import { useNoteAIStore } from '../../store/noteAIStore';
 
 interface MindMapEditorProps {
   value: string;
   onChange: (value: string) => void;
   darkMode?: boolean;
+  onSelectionChange?: (selection: { text: string; nodeData: any } | null) => void;
+}
+
+// 导出编辑器方法接口
+export interface MindMapEditorRef {
+  getSelection: () => { text: string; nodeData: any } | null;
+  insertContent: (content: string, position?: 'child' | 'sibling' | 'replace') => void;
+  replaceContent: (content: string) => void;
+  getContent: () => string;
+  getContentAsJSON: () => any;
 }
 
 // Default initial data structure
@@ -15,7 +26,8 @@ const DEFAULT_DATA = {
   "children": []
 };
 
-const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode }) => {
+const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, ref) => {
+  const { value, onChange, darkMode, onSelectionChange } = props;
   const containerRef = useRef<HTMLDivElement>(null);
   const mindMapRef = useRef<any>(null);
   const ignoreInitialChangeRef = useRef(true);
@@ -26,6 +38,91 @@ const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode
   const [themeOptions, setThemeOptions] = useState<Array<{ id: string; name: string; dark?: boolean }>>([
     { id: 'default', name: 'Default' },
   ]);
+  const { setSelection, pushHistory } = useNoteAIStore();
+
+  // 暴露方法给父组件
+  useImperativeHandle(ref, () => ({
+    getSelection: () => {
+      const mm = mindMapRef.current;
+      if (!mm) return null;
+      
+      const activeNodes = mm.renderer?.activeNodeList || [];
+      if (activeNodes.length === 0) return null;
+      
+      // 获取选中节点的数据
+      const nodeData = activeNodes.map((node: any) => ({
+        text: node.nodeData?.data?.text || '',
+        data: node.nodeData
+      }));
+      
+      const text = nodeData.map((n: any) => n.text).join('\n');
+      
+      return { text, nodeData };
+    },
+    insertContent: (content: string, position: 'child' | 'sibling' | 'replace' = 'child') => {
+      const mm = mindMapRef.current;
+      if (!mm) return;
+      
+      try {
+        // 尝试解析JSON
+        const parsed = JSON.parse(content);
+        
+        if (position === 'replace') {
+          mm.setData(parsed);
+        } else if (position === 'child') {
+          mm.execCommand('INSERT_CHILD_NODE');
+          // 设置新节点内容
+          const activeNode = mm.renderer?.activeNodeList?.[0];
+          if (activeNode && parsed.data?.text) {
+            mm.execCommand('SET_NODE_TEXT', activeNode, parsed.data.text);
+          }
+        } else {
+          mm.execCommand('INSERT_NODE');
+        }
+      } catch {
+        // 如果不是JSON，作为文本插入
+        mm.execCommand('INSERT_CHILD_NODE');
+        const activeNode = mm.renderer?.activeNodeList?.[0];
+        if (activeNode) {
+          mm.execCommand('SET_NODE_TEXT', activeNode, content);
+        }
+      }
+      
+      const newData = mm.getData();
+      const newContent = JSON.stringify(newData);
+      onChange(newContent);
+      pushHistory(newContent, 'ai-import');
+    },
+    replaceContent: (content: string) => {
+      const mm = mindMapRef.current;
+      if (!mm) return;
+      
+      try {
+        const parsed = JSON.parse(content);
+        mm.setData(parsed);
+        onChange(content);
+        pushHistory(content, 'ai-import');
+      } catch (e) {
+        console.error('Invalid mind map data:', e);
+      }
+    },
+    getContent: () => {
+      const mm = mindMapRef.current;
+      if (!mm) return value;
+      return JSON.stringify(mm.getData());
+    },
+    getContentAsJSON: () => {
+      const mm = mindMapRef.current;
+      if (!mm) {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return DEFAULT_DATA;
+        }
+      }
+      return mm.getData();
+    }
+  }), [value, onChange, pushHistory]);
 
   const layouts = [
     { id: 'logicalStructure', name: 'Logical Structure' },
@@ -144,6 +241,23 @@ const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode
               }
               if (currentData) {
                 onChange(JSON.stringify(currentData));
+              }
+            });
+
+            // 监听节点选中变化
+            mindMap.on('node_active', (node: any, activeNodeList: any[]) => {
+              if (activeNodeList && activeNodeList.length > 0) {
+                const nodeData = activeNodeList.map((n: any) => ({
+                  text: n.nodeData?.data?.text || '',
+                  data: n.nodeData
+                }));
+                const text = nodeData.map((n: any) => n.text).join('\n');
+                const selectionInfo = { text, nodeData };
+                setSelection(selectionInfo);
+                onSelectionChange?.(selectionInfo);
+              } else {
+                setSelection(null);
+                onSelectionChange?.(null);
               }
             });
             
@@ -396,6 +510,10 @@ const MindMapEditor: React.FC<MindMapEditorProps> = ({ value, onChange, darkMode
       </div>
     </div>
   );
-};
+});
+
+MindMapEditor.displayName = 'MindMapEditor';
 
 export default MindMapEditor;
+
+export type { MindMapEditorRef };

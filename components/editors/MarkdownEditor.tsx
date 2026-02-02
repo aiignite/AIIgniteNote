@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, Suspense, lazy, useCallback, Fragment } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy, useCallback, Fragment, forwardRef, useImperativeHandle } from 'react';
 import { commands } from '@uiw/react-md-editor';
 import "@uiw/react-md-editor/markdown-editor.css";
 import "@uiw/react-markdown-preview/markdown.css";
@@ -8,6 +8,7 @@ import 'katex/dist/katex.css';
 import mermaid from 'mermaid';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import { useNoteAIStore } from '../../store/noteAIStore';
 
 // Initialize mermaid
 if (typeof window !== 'undefined') {
@@ -94,11 +95,67 @@ interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
   darkMode?: boolean;
+  onSelectionChange?: (selection: { text: string; start: number; end: number } | null) => void;
 }
 
-const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ value, onChange, darkMode = false }) => {
+// 导出编辑器方法接口
+export interface MarkdownEditorRef {
+  getSelection: () => { text: string; start: number; end: number } | null;
+  insertContent: (content: string, position?: 'cursor' | 'end' | 'replace') => void;
+  replaceContent: (content: string) => void;
+  getContent: () => string;
+}
+
+const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props, ref) => {
+  const { value, onChange, darkMode = false, onSelectionChange } = props;
   const [internalValue, setInternalValue] = useState(value);
   const [isClient, setIsClient] = useState(false);
+  const editorRef = useRef<any>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const { setSelection, pushHistory } = useNoteAIStore();
+
+  // 暴露方法给父组件
+  useImperativeHandle(ref, () => ({
+    getSelection: () => {
+      const textarea = textareaRef.current;
+      if (!textarea) return null;
+      
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      if (start === end) return null;
+      
+      return {
+        text: internalValue.slice(start, end),
+        start,
+        end
+      };
+    },
+    insertContent: (content: string, position: 'cursor' | 'end' | 'replace' = 'cursor') => {
+      const textarea = textareaRef.current;
+      let newValue = internalValue;
+      
+      if (position === 'end') {
+        newValue = internalValue + '\n\n' + content;
+      } else if (position === 'replace' && textarea) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        newValue = internalValue.slice(0, start) + content + internalValue.slice(end);
+      } else if (position === 'cursor' && textarea) {
+        const pos = textarea.selectionStart;
+        newValue = internalValue.slice(0, pos) + content + internalValue.slice(pos);
+      }
+      
+      setInternalValue(newValue);
+      onChange(newValue);
+      pushHistory(newValue, 'ai-import');
+    },
+    replaceContent: (content: string) => {
+      setInternalValue(content);
+      onChange(content);
+      pushHistory(content, 'ai-import');
+    },
+    getContent: () => internalValue
+  }), [internalValue, onChange, pushHistory]);
 
   // Sync internal value when prop changes
   useEffect(() => {
@@ -109,11 +166,60 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ value, onChange, darkMo
     setIsClient(true);
   }, []);
 
+  // 监听选区变化
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      
+      if (start !== end) {
+        const selectionInfo = {
+          text: internalValue.slice(start, end),
+          start,
+          end
+        };
+        setSelection(selectionInfo);
+        onSelectionChange?.(selectionInfo);
+      } else {
+        setSelection(null);
+        onSelectionChange?.(null);
+      }
+    };
+
+    // 获取textarea引用
+    const findTextarea = () => {
+      const container = document.querySelector('.w-md-editor-text-input');
+      if (container instanceof HTMLTextAreaElement) {
+        textareaRef.current = container;
+        container.addEventListener('select', handleSelectionChange);
+        container.addEventListener('mouseup', handleSelectionChange);
+        container.addEventListener('keyup', handleSelectionChange);
+      }
+    };
+
+    // 延迟查找，等待编辑器加载
+    const timer = setTimeout(findTextarea, 500);
+
+    return () => {
+      clearTimeout(timer);
+      const textarea = textareaRef.current;
+      if (textarea) {
+        textarea.removeEventListener('select', handleSelectionChange);
+        textarea.removeEventListener('mouseup', handleSelectionChange);
+        textarea.removeEventListener('keyup', handleSelectionChange);
+      }
+    };
+  }, [internalValue, setSelection, onSelectionChange]);
+
   const handleChange = (val?: string) => {
     const newValue = val || '';
     if (newValue !== internalValue) {
       setInternalValue(newValue);
       onChange(newValue);
+      // 用户编辑时推入历史（由外部处理防抖）
     }
   };
 
@@ -247,6 +353,10 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ value, onChange, darkMo
       </div>
     </Suspense>
   );
-};
+});
+
+MarkdownEditor.displayName = 'MarkdownEditor';
 
 export default MarkdownEditor;
+
+export type { MarkdownEditorRef };

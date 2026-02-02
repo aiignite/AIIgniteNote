@@ -139,6 +139,10 @@ const App: React.FC = () => {
 
   // AI Panel state
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
+  // 编辑器ref，用于AI面板调用编辑器方法
+  const editorRef = useRef<any>(null);
+  // 导入AI内容到编辑器的函数引用
+  const importToEditorRef = useRef<((content: string, mode: 'replace' | 'insert' | 'append') => void) | null>(null);
 
   // Resize State
   const [leftPanelWidth, setLeftPanelWidth] = useState(300);
@@ -1037,6 +1041,7 @@ const App: React.FC = () => {
               onUpdateNote={handleUpdateNote} 
               aiPanelOpen={aiPanelOpen}
               onToggleAiPanel={() => setAiPanelOpen(!aiPanelOpen)}
+              onEditorRefChange={(ref) => { editorRef.current = ref?.current; }}
             />
           </div>
         );
@@ -1103,6 +1108,17 @@ const App: React.FC = () => {
               activeNote={activeNote}
               onClose={() => setAiPanelOpen(false)}
               width={rightPanelWidth}
+              editorRef={editorRef}
+              onImportToEditor={(content, mode) => {
+                // 直接调用编辑器的导入方法
+                if (editorRef.current) {
+                  if (mode === 'replace' && editorRef.current.replaceContent) {
+                    editorRef.current.replaceContent(content);
+                  } else if (editorRef.current.insertContent) {
+                    editorRef.current.insertContent(content, mode === 'append' ? 'end' : 'cursor');
+                  }
+                }
+              }}
             />
           </>
         )}
