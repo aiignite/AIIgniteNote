@@ -35,12 +35,9 @@ const frontendTypeToBackendType = (noteType: NoteType): string => {
 
 // Convert API Note to local Note type
 const apiNoteToLocalNote = (apiNote: any): Note => {
-  console.log('[apiNoteToLocalNote] Converting note:', JSON.stringify(apiNote, null, 2));
-
   // Convert backend note type to frontend note type
   let noteType: NoteType;
   const backendType = apiNote.noteType || apiNote.type;
-  console.log('[apiNoteToLocalNote] Backend note type:', backendType);
 
   switch (backendType) {
     case 'MARKDOWN':
@@ -56,32 +53,23 @@ const apiNoteToLocalNote = (apiNote: any): Note => {
       noteType = 'Drawio';
       break;
     default:
-      console.warn('[apiNoteToLocalNote] Unknown note type, defaulting to Markdown:', backendType);
       noteType = 'Markdown';
   }
 
-  console.log('[apiNoteToLocalNote] Frontend note type:', noteType);
-
   // Ensure content is always a string
   let content: string;
-  console.log('[apiNoteToLocalNote] Content type:', typeof apiNote.content);
-  console.log('[apiNoteToLocalNote] Content value:', apiNote.content);
 
   if (typeof apiNote.content === 'object' && apiNote.content?.content !== undefined) {
     content = String(apiNote.content.content);
-    console.log('[apiNoteToLocalNote] Extracted content from nested object:', content.substring(0, 50));
   } else if (typeof apiNote.content === 'string') {
     content = apiNote.content;
-    console.log('[apiNoteToLocalNote] Using string content directly:', content.substring(0, 50));
   } else {
     content = '';
-    console.warn('[apiNoteToLocalNote] Content is not valid, using empty string. Type:', typeof apiNote.content);
   }
 
   // Extract folder
   const folder = apiNote.folder?.name || 'General';
   const folderId = apiNote.folder?.id || apiNote.folderId || undefined;
-  console.log('[apiNoteToLocalNote] Folder:', folder, '(folder object:', apiNote.folder, ')');
 
   // Extract tags
   const tags = apiNote.tags?.map((t: any) => {
@@ -91,7 +79,6 @@ const apiNoteToLocalNote = (apiNote: any): Note => {
       color: tagObj.color || '#6b7280'
     };
   }).filter((tag: any) => typeof tag.name === 'string') || [];
-  console.log('[apiNoteToLocalNote] Tags:', tags, '(tags array:', apiNote.tags, ')');
 
   const result: Note = {
     id: apiNote.id,
@@ -106,8 +93,6 @@ const apiNoteToLocalNote = (apiNote: any): Note => {
     tags,
     isFavorite: apiNote.isFavorite || false,
   };
-
-  console.log('[apiNoteToLocalNote] Converted note:', JSON.stringify(result, null, 2));
 
   return result;
 };
@@ -245,37 +230,23 @@ const App: React.FC = () => {
       console.log('[loadNotes] Calling api.getNotes()...');
       const response = await api.getNotes({ isDeleted: includeDeleted }) as { success: boolean; data: ApiNote[] };
 
-      console.log('[loadNotes] API Response:', response);
-      console.log('[loadNotes] Response.success:', response.success);
-      console.log('[loadNotes] Response.data type:', typeof response.data);
-      console.log('[loadNotes] Response.data is Array:', Array.isArray(response.data));
-      console.log('[loadNotes] Response.data length:', response.data?.length);
-
       if (response.success) {
-        console.log('[loadNotes] Processing notes data...');
         const localNotes = response.data.map(apiNoteToLocalNote);
-        console.log('[loadNotes] Converted notes:', localNotes);
-        console.log('[loadNotes] Notes count:', localNotes.length);
 
         setNotes(localNotes);
 
         // Sync to IndexedDB using clear-and-replace to ensure deleted notes are removed
         try {
           await indexedDB.clearAndCacheNotes(localNotes);
-          console.log('[loadNotes] Notes synced to IndexedDB:', localNotes.length);
         } catch (cacheError) {
           console.warn('[loadNotes] Failed to sync notes to IndexedDB:', cacheError);
         }
 
         // Select first note if none selected
         if (!selectedNoteId && localNotes.length > 0) {
-          console.log('[loadNotes] Auto-selecting first note:', localNotes[0].id);
           setSelectedNoteId(localNotes[0].id);
-        } else {
-          console.log('[loadNotes] No notes to auto-select or note already selected');
         }
       } else {
-        console.error('[loadNotes] Response.success is false:', response);
         setNotesError('API returned unsuccessful response');
       }
     } catch (error) {
@@ -783,15 +754,6 @@ const App: React.FC = () => {
       if (response.success) {
         const apiUpdatedNote = apiNoteToLocalNote(response.data);
 
-        console.log('[App] handleUpdateNote - API response.success true:', {
-          noteId: updatedNote.id,
-          responseData: response.data,
-          responseDataContent: response.data?.content,
-          responseDataContentType: typeof response.data?.content,
-          apiUpdatedNoteContent: apiUpdatedNote.content,
-          apiUpdatedNoteContentType: typeof apiUpdatedNote.content
-        });
-
         // Update local state
         setNotes(prev => prev.map(n => n.id === updatedNote.id ? apiUpdatedNote : n));
 
@@ -923,7 +885,9 @@ const App: React.FC = () => {
   // Apply theme color to CSS variables whenever primaryColor changes
   useEffect(() => {
     const theme = getTheme();
-    document.documentElement.style.setProperty('--color-primary', theme.rgb);
+    // Tailwind v4 需要使用 var() 格式引用内置颜色变量
+    document.documentElement.style.setProperty('--color-primary', theme.tailwindVar);
+    document.documentElement.style.setProperty('--color-background-light', theme.tailwindBgVar);
   }, [primaryColor, getTheme]);
 
   // Handle Resizing Logic

@@ -3,10 +3,12 @@ import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef } f
 import katex from 'katex';
 import 'katex/dist/katex.css';
 import { useNoteAIStore } from '../../store/noteAIStore';
+import Quill from 'quill';
 
 // Set KaTeX to window for Quill formula support
 if (typeof window !== 'undefined') {
   (window as any).katex = katex;
+  (window as any).Quill = Quill;
 }
 
 interface RichTextEditorProps {
@@ -21,6 +23,7 @@ export interface RichTextEditorRef {
   insertContent: (content: string, position?: 'cursor' | 'end' | 'replace') => void;
   replaceContent: (content: string) => void;
   getContent: () => string;
+  exportAsPDF: (title: string) => Promise<void>;
 }
 
 const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props, ref) => {
@@ -90,21 +93,60 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
       onChange(content);
       pushHistory(content, 'ai-import');
     },
-    getContent: () => internalValue
+    getContent: () => internalValue,
+    exportAsPDF: async (title: string) => {
+      const { default: jsPDF } = await import('jspdf');
+      const { default: html2canvas } = await import('html2canvas');
+      
+      const quillEditor = quillRef.current?.getEditor?.();
+      if (!quillEditor) return;
+      
+      const element = quillEditor.root;
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`${title || 'note'}.pdf`);
+    }
   }), [internalValue, onChange, pushHistory]);
 
   useEffect(() => {
     // Robust dynamic import
-    import('react-quill')
-      .then(mod => {
+    Promise.all([
+      import('react-quill'),
+      import('quill-better-table'),
+      import('quill-image-resize-module-react')
+    ])
+      .then(([mod, BetterTable, ImageResize]) => {
+        const Quill = (window as any).Quill;
+        
+        // Register Better Table
+        Quill.register({
+          'modules/better-table': BetterTable.default
+        }, true);
+        
+        // Register Image Resize
+        Quill.register('modules/imageResize', ImageResize.default);
+        
         // Import Quill CSS styles
         import('react-quill/dist/quill.snow.css');
+        import('quill-better-table/dist/quill-better-table.css');
+        
         // Handle different export types
         const Component = mod.default || mod;
         setQuillComponent(() => Component);
       })
       .catch(err => {
-        console.error("Failed to load react-quill", err);
+        console.error("Failed to load react-quill and plugins", err);
         setError("Failed to load Rich Text Editor.");
       });
   }, []);
@@ -132,17 +174,40 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
   };
 
   const modules = {
-    toolbar: [
-      [{ 'font': [] }, { 'size': [] }],
-      ['bold', 'italic', 'underline', 'strike'],
-      [{ 'color': [] }, { 'background': [] }],
-      [{ 'script': 'super' }, { 'script': 'sub' }],
-      [{ 'header': '1' }, { 'header': '2' }, 'blockquote', 'code-block'],
-      [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'indent': '-1' }, { 'indent': '+1' }],
-      [{ 'direction': 'rtl' }, { 'align': [] }],
-      ['link', 'image', 'video', 'formula'],
-      ['clean']
-    ],
+    toolbar: {
+      container: [
+        [{ 'font': [] }, { 'size': [] }],
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ 'color': [] }, { 'background': [] }],
+        [{ 'script': 'super' }, { 'script': 'sub' }],
+        [{ 'header': '1' }, { 'header': '2' }, 'blockquote', 'code-block'],
+        [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'indent': '-1' }, { 'indent': '+1' }],
+        [{ 'direction': 'rtl' }, { 'align': [] }],
+        ['link', 'image', 'video', 'formula'],
+        ['table'],
+        ['clean']
+      ],
+      handlers: {
+        table: function() {
+          const betterTable = this.quill.getModule('better-table');
+          betterTable.insertTable(3, 3);
+        }
+      }
+    },
+    table: false, // disable original table module
+    'better-table': {
+      operationMenu: {
+        items: {
+          unmergeCells: {
+            text: 'Unmerge Cells'
+          }
+        }
+      }
+    },
+    imageResize: {
+      parchment: Quill.import('parchment'),
+      modules: ['Resize', 'DisplaySize', 'Toolbar']
+    },
   };
 
   const formats = [
@@ -152,7 +217,8 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     'script', 'header', 'blockquote', 'code-block',
     'list', 'bullet', 'indent',
     'direction', 'align',
-    'link', 'image', 'video', 'formula'
+    'link', 'image', 'video', 'formula',
+    'better-table'
   ];
 
   // Handle Quill onChange with validation
@@ -160,28 +226,13 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     const newValue = val || '';
     const isEmptyContent = newValue === '' || newValue === '<p><br></p>' || newValue === '<p></p>';
     
-    console.log('[RichTextEditor] handleChange called:', {
-      receivedValue: val,
-      receivedType: typeof val,
-      newValue,
-      newLength: newValue.length,
-      oldLength: internalValue.length,
-      isEmpty: isEmptyContent,
-      isSame: newValue === internalValue
-    });
-
     setInternalValue(newValue);
 
     // Only trigger onChange if content actually changed and is not empty
     if (newValue !== internalValue) {
       if (!isEmptyContent || newValue.length > 11) { // 11 = '<p><br></p>'.length
-        console.log('[RichTextEditor] Triggering onChange with content length:', newValue.length);
         onChange(newValue);
-      } else {
-        console.log('[RichTextEditor] Skipping onChange - content is empty or default empty state');
       }
-    } else {
-      console.log('[RichTextEditor] Skipping onChange - value unchanged');
     }
   };
 
@@ -205,7 +256,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
   }
 
   return (
-    <div className="h-full w-full flex flex-col bg-transparent">
+    <div className="h-full w-full flex flex-col bg-transparent rich-text-editor-container">
       <QuillComponent
         ref={quillRef}
         theme="snow"
@@ -217,6 +268,19 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
         className="h-full flex flex-col"
         placeholder="Start writing rich text..."
       />
+      <style>{`
+        .rich-text-editor-container .ql-container {
+          font-family: 'Inter', -apple-system, system-ui, sans-serif;
+          font-size: 16px;
+        }
+        .rich-text-editor-container .ql-editor {
+          min-height: 100%;
+          line-height: 1.6;
+        }
+        .rich-text-editor-container .ql-better-table-wrapper {
+          margin: 10px 0;
+        }
+      `}</style>
     </div>
   );
 });
@@ -226,3 +290,4 @@ RichTextEditor.displayName = 'RichTextEditor';
 export default RichTextEditor;
 
 export type { RichTextEditorRef };
+

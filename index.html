@@ -1,13 +1,10 @@
-
 <!DOCTYPE html>
 <html lang="en" class="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AIIgniteNote - AI Powered Productivity</title>
-  <script src="https://cdn.tailwindcss.com?plugins=forms,typography,container-queries"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
   
   <!-- Editor Styles -->
   <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
@@ -16,38 +13,13 @@
   <link href="https://esm.sh/@uiw/react-md-editor@3.6.0/markdown-editor.css" rel="stylesheet">
   <link href="https://esm.sh/@uiw/react-markdown-preview@3.5.1/markdown.css" rel="stylesheet">
 
-  <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            "primary": "rgb(var(--color-primary) / <alpha-value>)",
-            "background-light": "#fff7ed",
-            "background-dark": "#101c22",
-          },
-          fontFamily: {
-            "display": ["Inter", "sans-serif"]
-          }
-        },
-      },
-    }
-  </script>
   <style>
-    :root {
-      --color-primary: 234 88 12; /* Default Orange */
-    }
-    
     .material-symbols-outlined {
       font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
       display: inline-block;
       vertical-align: middle;
     }
-    .scrollbar-hide::-webkit-scrollbar { display: none; }
-    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-    body { font-family: 'Inter', sans-serif; }
     
-    /* Custom overrides for libraries */
     .quill { height: 100%; display: flex; flex-direction: column; }
     .ql-container { flex: 1; overflow-y: auto; font-family: 'Inter', sans-serif; font-size: 1rem; }
     .ql-toolbar { border-top: none !important; border-left: none !important; border-right: none !important; border-color: #e5e7eb !important; }
@@ -68,26 +40,27 @@
     .prose ul { list-style-type: disc; padding-left: 1.25rem; margin-bottom: 0.5rem; }
     .prose ol { list-style-type: decimal; padding-left: 1.25rem; margin-bottom: 0.5rem; }
   </style>
-<script type="importmap">
-{
-  "imports": {
-    "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
-    "react": "https://esm.sh/react@18.2.0",
-    "react/": "https://esm.sh/react@18.2.0/",
-    "react-dom": "https://esm.sh/react-dom@18.2.0",
-    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
-    "@uiw/react-md-editor": "https://esm.sh/@uiw/react-md-editor@3.6.0?deps=react@18.2.0,react-dom@18.2.0",
-    "react-quill": "https://esm.sh/react-quill@2.0.0?deps=react@18.2.0,react-dom@18.2.0",
-    "simple-mind-map": "https://esm.sh/simple-mind-map@0.11.0?deps=@svgdotjs/svg.js@3.2.0",
-    "@svgdotjs/svg.js": "https://esm.sh/@svgdotjs/svg.js@3.2.0",
-    "clsx": "https://esm.sh/clsx@2.1.0",
-    "zustand": "https://esm.sh/zustand@4.5.0?deps=react@18.2.0",
-    "react-markdown": "https://esm.sh/react-markdown@9.0.1?deps=react@18.2.0,react-dom@18.2.0"
+
+  <script type="importmap">
+  {
+    "imports": {
+      "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
+      "react": "https://esm.sh/react@18.2.0",
+      "react/": "https://esm.sh/react@18.2.0/",
+      "react-dom": "https://esm.sh/react-dom@18.2.0",
+      "react-dom/": "https://esm.sh/react-dom@18.2.0/",
+      "@uiw/react-md-editor": "https://esm.sh/@uiw/react-md-editor@3.6.0?deps=react@18.2.0,react-dom@18.2.0",
+      "react-quill": "https://esm.sh/react-quill@2.0.0?deps=react@18.2.0,react-dom@18.2.0",
+      "simple-mind-map": "https://esm.sh/simple-mind-map@0.11.0?deps=@svgdotjs/svg.js@3.2.0",
+      "@svgdotjs/svg.js": "https://esm.sh/@svgdotjs/svg.js@3.2.0",
+      "clsx": "https://esm.sh/clsx@2.1.0",
+      "zustand": "https://esm.sh/zustand@4.5.0?deps=react@18.2.0",
+      "react-markdown": "https://esm.sh/react-markdown@9.0.1?deps=react@18.2.0,react-dom@18.2.0"
+    }
   }
-}
-</script>
+  </script>
 </head>
-<body class="bg-background-light dark:bg-background-dark text-[#111618] dark:text-white h-screen overflow-hidden">
+<body class="bg-white dark:bg-[#0f1419] text-gray-900 dark:text-gray-50 transition-colors">
   <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>

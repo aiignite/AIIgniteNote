@@ -550,6 +550,7 @@ model UserSettings {
   id                   String    @id @default(cuid())
   userId               String    @unique
   theme                String    @default("system")
+  primaryColor         String    @default("orange")
   defaultNoteType      NoteType  @default(MARKDOWN)
   aiModelPreference    String?
   sidebarWidth         Int       @default(380)

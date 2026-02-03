@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+/* 指定 Tailwind 需要扫描的源文件目录 */
+@source "../components";
+@source "../App.tsx";
+@source "../index.tsx";
+@source "../services";
+@source "../store";
+
+@theme inline {
+  /* 主题色 - 引用 Tailwind 内置的 orange-600 颜色 */
+  --color-primary: var(--color-orange-600);
+  
+  /* 背景色 - 引用 Tailwind 内置的 orange-50 */
+  --color-background-light: var(--color-orange-50);
+  --color-background-dark: #101c22;
+  
+  /* 文本颜色 */
+  --color-text-primary-light: #1f2937;
+  --color-text-primary-dark: #f3f4f6;
+  --color-text-secondary-light: #6b7280;
+  --color-text-secondary-dark: #9ca3af;
+  
+  /* 边框颜色 */
+  --color-border-light: #e5e7eb;
+  --color-border-dark: #374151;
+  
+  /* 卡片/表面颜色 */
+  --color-surface-light: #ffffff;
+  --color-surface-dark: #1f2937;
+  
+  /* 字体 - Tailwind v4 使用 --font-* 命名空间 */
+  --font-display: Inter, sans-serif;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+}
+
+/* Custom overrides for libraries */
+.ql-container {
+  font-size: 0.875rem;
+}
+
+.ql-editor {
+  min-height: 300px;
+}
+
+.ql-snow .ql-toolbar {
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+  background-color: rgb(249 250 251);
+}
+
+.ql-snow .ql-container {
+  border-bottom-left-radius: 0.5rem;
+  border-bottom-right-radius: 0.5rem;
+}
+
+.dark .ql-snow .ql-toolbar {
+  background-color: rgb(31 41 55);
+  border-color: rgb(55 65 81);
+}
+
+.dark .ql-snow .ql-container {
+  background-color: rgb(17 24 39);
+  border-color: rgb(55 65 81);
+}
+
+.dark .ql-snow .ql-editor {
+  color: rgb(209 213 219);
+}
+
+.dark .ql-toolbar.ql-snow .ql-picker-label {
+  color: rgb(209 213 219);
+}
+
+/* Mind Map Styles */
+.mind-map-container {
+  background: white;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.dark .mind-map-container {
+  background-color: rgb(31 41 55);
+}

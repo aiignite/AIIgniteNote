@@ -1,0 +1,32 @@
+- generic [ref=e5]:
+  - generic [ref=e6]:
+    - img [ref=e8]
+    - heading "欢迎回来" [level=1] [ref=e14]
+    - paragraph [ref=e15]: 登录您的智能工作区
+  - generic [ref=e16]:
+    - generic [ref=e17]:
+      - generic [ref=e18]:
+        - text: 邮箱
+        - textbox "name@company.com" [ref=e19]
+      - generic [ref=e20]:
+        - generic [ref=e21]:
+          - generic [ref=e22]: 密码
+          - link "Forgot?" [ref=e23] [cursor=pointer]:
+            - /url: "#"
+        - generic [ref=e24]:
+          - textbox "•••••" [ref=e25]
+          - button "Show password" [ref=e26]:
+            - generic [ref=e27]: visibility
+      - button "login 登录" [ref=e28]:
+        - generic [ref=e29]: login
+        - generic [ref=e30]: 登录
+    - paragraph [ref=e32]:
+      - text: 新用户？
+      - button "创建账户" [ref=e33]
+  - generic [ref=e34]:
+    - link "Privacy" [ref=e35] [cursor=pointer]:
+      - /url: "#"
+    - link "Terms" [ref=e36] [cursor=pointer]:
+      - /url: "#"
+    - link "Help" [ref=e37] [cursor=pointer]:
+      - /url: "#"

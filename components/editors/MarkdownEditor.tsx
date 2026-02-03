@@ -7,6 +7,9 @@ import katex from 'katex';
 import 'katex/dist/katex.css';
 import mermaid from 'mermaid';
 import remarkMath from 'remark-math';
+import remarkGfm from 'remark-gfm';
+import remarkToc from 'remark-toc';
+import remarkEmoji from 'remark-emoji';
 import rehypeKatex from 'rehype-katex';
 import { useNoteAIStore } from '../../store/noteAIStore';
 
@@ -240,9 +243,9 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
         <head>
           <meta charset="utf-8">
           <title>Exported Note</title>
-          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
           <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; line-height: 1.6; max-width: 900px; margin: 0 auto; color: #333; }
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+            body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; line-height: 1.6; max-width: 900px; margin: 0 auto; color: #333; }
             img { max-width: 100%; border-radius: 8px; }
             pre { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow: auto; border: 1px solid #ddd; }
             code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 85%; }
@@ -282,6 +285,170 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
     }
   };
 
+  const formulaCommand = {
+    name: 'formula',
+    keyCommand: 'formula',
+    buttonProps: { 'aria-label': 'Insert formula', title: '插入公式' },
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7 20h10" />
+        <path d="M18 6H6l10 6-10 6h12" />
+      </svg>
+    ),
+    children: [
+      {
+        name: 'inline-formula',
+        label: '行内公式 ($...$)',
+        execute: (state: any, api: any) => {
+          const selection = state.selectedText || 'expression';
+          api.replaceSelection(`$${selection}$`);
+        }
+      },
+      {
+        name: 'block-formula',
+        label: '块级公式 ($$...$$)',
+        execute: (state: any, api: any) => {
+          const selection = state.selectedText || 'expression';
+          api.replaceSelection(`\n$$\n${selection}\n$$\n`);
+        }
+      }
+    ]
+  };
+
+  const mermaidCommand = {
+    name: 'mermaid',
+    keyCommand: 'mermaid',
+    buttonProps: { 'aria-label': 'Insert diagram', title: '插入图表' },
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="7" height="7" rx="1" />
+        <rect x="14" y="14" width="7" height="7" rx="1" />
+        <path d="M10 6.5h4" />
+        <path d="M6.5 10v4" />
+      </svg>
+    ),
+    children: [
+      {
+        name: 'flowchart',
+        label: '流程图 (Flowchart)',
+        execute: (state: any, api: any) => {
+          api.replaceSelection(`\n\`\`\`mermaid\ngraph TD\n    A[开始] --> B{判断}\n    B -- 是 --> C[确认]\n    B -- 否 --> D[结束]\n\`\`\`\n`);
+        }
+      },
+      {
+        name: 'sequence',
+        label: '时序图 (Sequence)',
+        execute: (state: any, api: any) => {
+          api.replaceSelection(`\n\`\`\`mermaid\nsequenceDiagram\n    Alice->>John: Hello John, how are you?\n    John-->>Alice: Great!\n\`\`\`\n`);
+        }
+      },
+      {
+        name: 'gantt',
+        label: '甘特图 (Gantt)',
+        execute: (state: any, api: any) => {
+          api.replaceSelection(`\n\`\`\`mermaid\ngantt\n    title 项目计划\n    section 任务\n    任务1 :a1, 2023-01-01, 30d\n    任务2 :after a1, 20d\n\`\`\`\n`);
+        }
+      },
+      {
+        name: 'mindmap',
+        label: '思维导图 (Mindmap)',
+        execute: (state: any, api: any) => {
+          api.replaceSelection(`\n\`\`\`mermaid\nmindmap\n  root((中心))\n    分支1\n      子分支1.1\n    分支2\n      子分支2.1\n\`\`\`\n`);
+        }
+      }
+    ]
+  };
+
+  const calloutCommand = {
+    name: 'callout',
+    keyCommand: 'callout',
+    buttonProps: { 'aria-label': 'Insert callout', title: '插入提示' },
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4" />
+        <path d="M12 8h.01" />
+      </svg>
+    ),
+    children: [
+      {
+        name: 'note',
+        label: '备注 (Note)',
+        execute: (state: any, api: any) => {
+          const selection = state.selectedText || '内容';
+          api.replaceSelection(`> [!NOTE]\n> ${selection}`);
+        }
+      },
+      {
+        name: 'tip',
+        label: '提示 (Tip)',
+        execute: (state: any, api: any) => {
+          const selection = state.selectedText || '内容';
+          api.replaceSelection(`> [!TIP]\n> ${selection}`);
+        }
+      },
+      {
+        name: 'important',
+        label: '重要 (Important)',
+        execute: (state: any, api: any) => {
+          const selection = state.selectedText || '内容';
+          api.replaceSelection(`> [!IMPORTANT]\n> ${selection}`);
+        }
+      },
+      {
+        name: 'warning',
+        label: '警告 (Warning)',
+        execute: (state: any, api: any) => {
+          const selection = state.selectedText || '内容';
+          api.replaceSelection(`> [!WARNING]\n> ${selection}`);
+        }
+      },
+      {
+        name: 'caution',
+        label: '小心 (Caution)',
+        execute: (state: any, api: any) => {
+          const selection = state.selectedText || '内容';
+          api.replaceSelection(`> [!CAUTION]\n> ${selection}`);
+        }
+      }
+    ]
+  };
+
+  const highlightCommand = {
+    name: 'highlight',
+    keyCommand: 'highlight',
+    buttonProps: { 'aria-label': 'Highlight text', title: '高亮' },
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="m9 11-6 6v3h9l3-3" />
+        <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+      </svg>
+    ),
+    execute: (state: any, api: any) => {
+      const selection = state.selectedText || '文本';
+      api.replaceSelection(`==${selection}==`);
+    }
+  };
+
+  const tocCommand = {
+    name: 'toc',
+    keyCommand: 'toc',
+    buttonProps: { 'aria-label': 'Table of Contents', title: '插入目录' },
+    icon: (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="10" y1="6" x2="21" y2="6" />
+        <line x1="10" y1="12" x2="21" y2="12" />
+        <line x1="10" y1="18" x2="21" y2="18" />
+        <path d="M4 6h1v4" />
+        <path d="M4 10h2" />
+        <path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" />
+      </svg>
+    ),
+    execute: (state: any, api: any) => {
+      api.replaceSelection(`\n[TOC]\n`);
+    }
+  };
+
   const allCommands = [
     commands.title,
     commands.bold,
@@ -294,6 +461,12 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
     commands.code,
     commands.codeBlock,
     commands.image,
+    commands.divider,
+    formulaCommand,
+    mermaidCommand,
+    calloutCommand,
+    highlightCommand,
+    tocCommand,
     commands.divider,
     commands.unorderedListCommand,
     commands.orderedListCommand,
@@ -336,6 +509,26 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
         .w-md-editor-fullscreen .w-md-editor-preview {
           background: ${darkMode ? '#0f172a' : '#ffffff'};
         }
+        /* Markdown Preview Enhancements */
+        .markdown-body mark {
+          background-color: #fef08a;
+          color: #000;
+          padding: 0 2px;
+          border-radius: 2px;
+        }
+        /* Callout Styles (GitHub Style) */
+        .markdown-body blockquote {
+          border-left: 4px solid #dfe2e5;
+          color: ${darkMode ? '#94a3b8' : '#6a737d'};
+          padding: 0 1em;
+          margin-bottom: 16px;
+        }
+        .markdown-body blockquote p:first-child strong:first-child {
+          display: block;
+          margin-bottom: 4px;
+        }
+        /* Basic support for ==highlight== if rendered as mark */
+        /* If not rendered as mark, we might need a rehype plugin */
       `}</style>
       <div className="h-full w-full flex flex-col" data-color-mode={darkMode ? 'dark' : 'light'}>
         <MDEditorLazy
@@ -349,6 +542,13 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
           }}
           commands={allCommands}
           extraCommands={extraCommands}
+          previewOptions={{
+             remarkPlugins: [remarkMath, remarkGfm, [remarkToc, { heading: 'toc|目录', tight: true }], remarkEmoji],
+             rehypePlugins: [rehypeKatex],
+             components: {
+               code: Code
+             }
+          }}
         />
       </div>
     </Suspense>

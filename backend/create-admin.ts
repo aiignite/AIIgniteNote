@@ -6,7 +6,8 @@ const prisma = new PrismaClient();
 async function createAdminUser() {
   try {
     const adminEmail = 'admin@aiignite.com';
-    const adminPassword = 'Admin12345';
+    // 更新默认密码（请登录后立即修改）
+    const adminPassword = 'Admin123456';
 
     const hashedPassword = await hashPassword(adminPassword);
 
@@ -15,13 +16,13 @@ async function createAdminUser() {
       where: { email: adminEmail },
       update: {
         password: hashedPassword,
-        name: 'System Administrator',
+        name: 'Admin User',
         isActive: true,
         emailVerified: new Date(),
       },
       create: {
         email: adminEmail,
-        name: 'System Administrator',
+        name: 'Admin User',
         password: hashedPassword,
         isActive: true,
         emailVerified: new Date(),

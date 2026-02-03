@@ -121,12 +121,6 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
   // Sync active mode with note type when note changes
   useEffect(() => {
     if (note) {
-      console.log('[Editor] Note changed, setting active mode:', {
-        noteId: note.id,
-        noteType: note.type,
-        noteTitle: note.title,
-        previousMode: activeMode
-      });
       setActiveMode(note.type);
       // 同步笔记到store
       setCurrentNote(note.id, note.type, note.content);
@@ -474,6 +468,17 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
       handleRemoveTag(tagName);
     } else {
       handleAddTag(tagName);
+    }
+  };
+
+  const handleExportPDF = async () => {
+    if (!note) return;
+    
+    if (activeMode === 'Rich Text' && richTextEditorRef.current) {
+      await richTextEditorRef.current.exportAsPDF(note.title);
+      showImportToast('PDF已生成并导出', 'success');
+    } else {
+      showImportToast('当前编辑器暂不支持导出PDF', 'error');
     }
   };
 
