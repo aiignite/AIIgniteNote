@@ -471,17 +471,6 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
     }
   };
 
-  const handleExportPDF = async () => {
-    if (!note) return;
-    
-    if (activeMode === 'Rich Text' && richTextEditorRef.current) {
-      await richTextEditorRef.current.exportAsPDF(note.title);
-      showImportToast('PDF已生成并导出', 'success');
-    } else {
-      showImportToast('当前编辑器暂不支持导出PDF', 'error');
-    }
-  };
-
   const renderEditor = () => {
     switch (activeMode) {
       case 'Markdown':
