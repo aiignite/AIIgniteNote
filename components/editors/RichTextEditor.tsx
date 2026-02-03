@@ -58,6 +58,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastValueRef = useRef<string | null>(null);
   const isApplyingExternalValueRef = useRef(false);
+  const isComposingRef = useRef(false);
   const { setSelection, pushHistory, currentNoteId } = useNoteAIStore();
 
   const useBlockNote = true;
@@ -368,6 +369,18 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
         <div
           ref={blockNoteContainerRef}
           className="h-full w-full flex flex-col"
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            isComposingRef.current = false;
+            // Composition ended, ensure we signal the change
+            if (isApplyingExternalValueRef.current) return;
+            const json = JSON.stringify(blockNoteEditor.document);
+            setInternalValue(json);
+            lastValueRef.current = json;
+            onChange(json);
+          }}
           onClick={(e) => {
             const target = e.target as HTMLElement;
             const fileBlock = target.closest('.bn-file-block-content-wrapper');
@@ -391,6 +404,9 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
             emojiPicker={true}
             onChange={async () => {
               if (isApplyingExternalValueRef.current) return;
+              // Skip update during IME composition to prevent input conflicts
+              if (isComposingRef.current) return;
+              
               const json = JSON.stringify(blockNoteEditor.document);
               setInternalValue(json);
               lastValueRef.current = json;
