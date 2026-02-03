@@ -10,6 +10,7 @@ import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
 import remarkToc from 'remark-toc';
 import remarkEmoji from 'remark-emoji';
+import remarkFootnotes from 'remark-footnotes';
 import rehypeKatex from 'rehype-katex';
 import { useNoteAIStore } from '../../store/noteAIStore';
 
@@ -113,13 +114,19 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
   const { value, onChange, darkMode = false, onSelectionChange } = props;
   const [internalValue, setInternalValue] = useState(value);
   const [isClient, setIsClient] = useState(false);
+  const editorMode = 'cherry' as const;
   const editorRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const cherryRef = useRef<any>(null);
+  const cherryContainerId = useRef(`cherry-editor-${randomid()}`);
+  const lastValueRef = useRef(value);
+  const onChangeRef = useRef(onChange);
   const { setSelection, pushHistory } = useNoteAIStore();
 
   // 暴露方法给父组件
   useImperativeHandle(ref, () => ({
     getSelection: () => {
+      if (editorMode === 'cherry') return null;
       const textarea = textareaRef.current;
       if (!textarea) return null;
       
@@ -134,6 +141,17 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
       };
     },
     insertContent: (content: string, position: 'cursor' | 'end' | 'replace' = 'cursor') => {
+      if (editorMode === 'cherry' && cherryRef.current) {
+        if (position === 'replace') {
+          cherryRef.current.setValue(content, false);
+        } else if (position === 'end') {
+          const current = cherryRef.current.getValue();
+          cherryRef.current.setValue(`${current}\n\n${content}`, false);
+        } else {
+          cherryRef.current.insert(content);
+        }
+        return;
+      }
       const textarea = textareaRef.current;
       let newValue = internalValue;
       
@@ -153,24 +171,107 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
       pushHistory(newValue, 'ai-import');
     },
     replaceContent: (content: string) => {
+      if (editorMode === 'cherry' && cherryRef.current) {
+        cherryRef.current.setValue(content, false);
+        return;
+      }
       setInternalValue(content);
       onChange(content);
       pushHistory(content, 'ai-import');
     },
     getContent: () => internalValue
-  }), [internalValue, onChange, pushHistory]);
+  }), [editorMode, internalValue, onChange, pushHistory]);
 
   // Sync internal value when prop changes
   useEffect(() => {
     setInternalValue(value);
-  }, [value]);
+    if (editorMode === 'cherry' && cherryRef.current && value !== lastValueRef.current) {
+      cherryRef.current.setValue(value, true);
+    }
+    lastValueRef.current = value;
+  }, [value, editorMode]);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
 
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    if (!isClient || editorMode !== 'cherry') return;
+    let cancelled = false;
+
+    const initCherry = async () => {
+      const { default: Cherry } = await import('cherry-markdown');
+      const { default: echarts } = await import('echarts');
+      await import('cherry-markdown/dist/cherry-markdown.css');
+
+      if (cancelled) return;
+
+      const instance = new Cherry({
+        id: cherryContainerId.current,
+        value: internalValue,
+        externals: {
+          echarts
+        },
+        toolbars: {
+          theme: darkMode ? 'dark' : 'light',
+          toolbar: [
+            'bold', 'italic', 'underline', 'strikethrough', '|',
+            'header', 'list', 'ol', 'ul', 'checklist', '|',
+            'link', 'image', 'graph', 'table', 'proTable', 'quickTable', '|',
+            'formula', 'toc', 'export', 'pdf', 'word', '|',
+            'code', 'inlineCode', 'codeTheme', '|',
+            'undo', 'redo', 'fullScreen', 'togglePreview'
+          ],
+          bubble: ['bold', 'italic', 'underline', 'strikethrough', 'sub', 'sup', '|', 'size', 'color'],
+          float: ['h1', 'h2', 'h3', '|', 'checklist', 'quote', 'quickTable', 'code'],
+          toc: {
+            position: 'fixed',
+            defaultModel: 'full',
+            updateLocationHash: true
+          }
+        },
+        editor: {
+          height: 'calc(100vh - 120px)'
+        },
+        engine: {
+          syntax: {
+            table: {
+              enableChart: true
+            }
+          }
+        },
+        callback: {
+          afterChange: (text: string) => {
+            setInternalValue(text);
+            lastValueRef.current = text;
+            onChangeRef.current(text);
+          }
+        }
+      });
+
+      cherryRef.current = instance;
+    };
+
+    initCherry();
+
+    return () => {
+      cancelled = true;
+      if (cherryRef.current?.destroy) {
+        cherryRef.current.destroy();
+      }
+      const container = document.getElementById(cherryContainerId.current);
+      if (container) container.innerHTML = '';
+      cherryRef.current = null;
+    };
+  }, [darkMode, editorMode, isClient]);
+
   // 监听选区变化
   useEffect(() => {
+    if (editorMode !== 'uiw') return;
     const handleSelectionChange = () => {
       const textarea = textareaRef.current;
       if (!textarea) return;
@@ -215,7 +316,7 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
         textarea.removeEventListener('keyup', handleSelectionChange);
       }
     };
-  }, [internalValue, setSelection, onSelectionChange]);
+  }, [editorMode, internalValue, setSelection, onSelectionChange]);
 
   const handleChange = (val?: string) => {
     const newValue = val || '';
@@ -271,6 +372,62 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
     }
   };
 
+  const formulaCommand = {
+    name: 'formula',
+    keyCommand: 'formula',
+    buttonProps: { 'aria-label': 'Insert Formula', title: '插入公式' },
+    icon: (
+      <svg viewBox="0 0 16 16" width="12px" height="12px">
+        <path d="M2 2h12v2H9l3 4-3 4h5v2H2v-2h5l3-4-3-4H2V2z" fill="currentColor" />
+      </svg>
+    ),
+    execute: (state: any, api: any) => {
+      const placeholder = 'E=mc^2';
+      const text = `$$\n${placeholder}\n$$`;
+      const start = state.selection.start;
+      api.replaceSelection(text);
+      api.setSelectionRange({
+        start: start + 3,
+        end: start + 3 + placeholder.length
+      });
+    }
+  };
+
+  const mermaidCommand = {
+    name: 'mermaid',
+    keyCommand: 'mermaid',
+    buttonProps: { 'aria-label': 'Insert Mermaid', title: '插入 Mermaid 图' },
+    icon: (
+      <svg viewBox="0 0 16 16" width="12px" height="12px">
+        <path d="M2 3h12v2H2V3zm0 4h8v2H2V7zm0 4h12v2H2v-2zm10-2 4-2-4-2v4z" fill="currentColor" />
+      </svg>
+    ),
+    execute: (state: any, api: any) => {
+      const placeholder = 'flowchart TD\n  A[Start] --> B[End]';
+      const text = `\n\n\`\`\`mermaid\n${placeholder}\n\`\`\`\n\n`;
+      const start = state.selection.start;
+      api.replaceSelection(text);
+      api.setSelectionRange({
+        start: start + 10,
+        end: start + 10 + placeholder.length
+      });
+    }
+  };
+
+  const emojiCommand = {
+    name: 'emoji',
+    keyCommand: 'emoji',
+    buttonProps: { 'aria-label': 'Insert Emoji', title: '插入 Emoji' },
+    icon: (
+      <svg viewBox="0 0 16 16" width="12px" height="12px">
+        <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm0 12.5A5.5 5.5 0 1 1 8 2.5a5.5 5.5 0 0 1 0 11Zm-2-6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm4 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm-5 1.5a4 4 0 0 0 6 0H5z" fill="currentColor" />
+      </svg>
+    ),
+    execute: (_state: any, api: any) => {
+      api.replaceSelection('😊');
+    }
+  };
+
   const helpCommand = {
     name: 'help',
     keyCommand: 'help',
@@ -282,170 +439,6 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
     ),
     execute: () => {
       window.open('https://www.markdownguide.org/basic-syntax/', '_blank');
-    }
-  };
-
-  const formulaCommand = {
-    name: 'formula',
-    keyCommand: 'formula',
-    buttonProps: { 'aria-label': 'Insert formula', title: '插入公式' },
-    icon: (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M7 20h10" />
-        <path d="M18 6H6l10 6-10 6h12" />
-      </svg>
-    ),
-    children: [
-      {
-        name: 'inline-formula',
-        label: '行内公式 ($...$)',
-        execute: (state: any, api: any) => {
-          const selection = state.selectedText || 'expression';
-          api.replaceSelection(`$${selection}$`);
-        }
-      },
-      {
-        name: 'block-formula',
-        label: '块级公式 ($$...$$)',
-        execute: (state: any, api: any) => {
-          const selection = state.selectedText || 'expression';
-          api.replaceSelection(`\n$$\n${selection}\n$$\n`);
-        }
-      }
-    ]
-  };
-
-  const mermaidCommand = {
-    name: 'mermaid',
-    keyCommand: 'mermaid',
-    buttonProps: { 'aria-label': 'Insert diagram', title: '插入图表' },
-    icon: (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="7" height="7" rx="1" />
-        <rect x="14" y="14" width="7" height="7" rx="1" />
-        <path d="M10 6.5h4" />
-        <path d="M6.5 10v4" />
-      </svg>
-    ),
-    children: [
-      {
-        name: 'flowchart',
-        label: '流程图 (Flowchart)',
-        execute: (state: any, api: any) => {
-          api.replaceSelection(`\n\`\`\`mermaid\ngraph TD\n    A[开始] --> B{判断}\n    B -- 是 --> C[确认]\n    B -- 否 --> D[结束]\n\`\`\`\n`);
-        }
-      },
-      {
-        name: 'sequence',
-        label: '时序图 (Sequence)',
-        execute: (state: any, api: any) => {
-          api.replaceSelection(`\n\`\`\`mermaid\nsequenceDiagram\n    Alice->>John: Hello John, how are you?\n    John-->>Alice: Great!\n\`\`\`\n`);
-        }
-      },
-      {
-        name: 'gantt',
-        label: '甘特图 (Gantt)',
-        execute: (state: any, api: any) => {
-          api.replaceSelection(`\n\`\`\`mermaid\ngantt\n    title 项目计划\n    section 任务\n    任务1 :a1, 2023-01-01, 30d\n    任务2 :after a1, 20d\n\`\`\`\n`);
-        }
-      },
-      {
-        name: 'mindmap',
-        label: '思维导图 (Mindmap)',
-        execute: (state: any, api: any) => {
-          api.replaceSelection(`\n\`\`\`mermaid\nmindmap\n  root((中心))\n    分支1\n      子分支1.1\n    分支2\n      子分支2.1\n\`\`\`\n`);
-        }
-      }
-    ]
-  };
-
-  const calloutCommand = {
-    name: 'callout',
-    keyCommand: 'callout',
-    buttonProps: { 'aria-label': 'Insert callout', title: '插入提示' },
-    icon: (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10" />
-        <path d="M12 16v-4" />
-        <path d="M12 8h.01" />
-      </svg>
-    ),
-    children: [
-      {
-        name: 'note',
-        label: '备注 (Note)',
-        execute: (state: any, api: any) => {
-          const selection = state.selectedText || '内容';
-          api.replaceSelection(`> [!NOTE]\n> ${selection}`);
-        }
-      },
-      {
-        name: 'tip',
-        label: '提示 (Tip)',
-        execute: (state: any, api: any) => {
-          const selection = state.selectedText || '内容';
-          api.replaceSelection(`> [!TIP]\n> ${selection}`);
-        }
-      },
-      {
-        name: 'important',
-        label: '重要 (Important)',
-        execute: (state: any, api: any) => {
-          const selection = state.selectedText || '内容';
-          api.replaceSelection(`> [!IMPORTANT]\n> ${selection}`);
-        }
-      },
-      {
-        name: 'warning',
-        label: '警告 (Warning)',
-        execute: (state: any, api: any) => {
-          const selection = state.selectedText || '内容';
-          api.replaceSelection(`> [!WARNING]\n> ${selection}`);
-        }
-      },
-      {
-        name: 'caution',
-        label: '小心 (Caution)',
-        execute: (state: any, api: any) => {
-          const selection = state.selectedText || '内容';
-          api.replaceSelection(`> [!CAUTION]\n> ${selection}`);
-        }
-      }
-    ]
-  };
-
-  const highlightCommand = {
-    name: 'highlight',
-    keyCommand: 'highlight',
-    buttonProps: { 'aria-label': 'Highlight text', title: '高亮' },
-    icon: (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="m9 11-6 6v3h9l3-3" />
-        <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
-      </svg>
-    ),
-    execute: (state: any, api: any) => {
-      const selection = state.selectedText || '文本';
-      api.replaceSelection(`==${selection}==`);
-    }
-  };
-
-  const tocCommand = {
-    name: 'toc',
-    keyCommand: 'toc',
-    buttonProps: { 'aria-label': 'Table of Contents', title: '插入目录' },
-    icon: (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="10" y1="6" x2="21" y2="6" />
-        <line x1="10" y1="12" x2="21" y2="12" />
-        <line x1="10" y1="18" x2="21" y2="18" />
-        <path d="M4 6h1v4" />
-        <path d="M4 10h2" />
-        <path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" />
-      </svg>
-    ),
-    execute: (state: any, api: any) => {
-      api.replaceSelection(`\n[TOC]\n`);
     }
   };
 
@@ -464,9 +457,7 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
     commands.divider,
     formulaCommand,
     mermaidCommand,
-    calloutCommand,
-    highlightCommand,
-    tocCommand,
+    emojiCommand,
     commands.divider,
     commands.unorderedListCommand,
     commands.orderedListCommand,
@@ -485,8 +476,14 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
     commands.codePreview,
     commands.codeLive,
     commands.fullscreen,
-    commands.help,
   ].filter(Boolean) as any[];
+
+  // 统计字数
+  const stats = {
+    lines: internalValue.split('\n').length,
+    words: internalValue.trim() ? internalValue.trim().split(/\s+/).length : 0,
+    chars: internalValue.length
+  };
 
   return (
     <Suspense
@@ -531,25 +528,20 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
         /* If not rendered as mark, we might need a rehype plugin */
       `}</style>
       <div className="h-full w-full flex flex-col" data-color-mode={darkMode ? 'dark' : 'light'}>
-        <MDEditorLazy
-          value={internalValue}
-          onChange={handleChange}
-          height="calc(100vh - 120px)"
-          preview="live"
-          className="flex-1 border-none shadow-none bg-transparent"
-          textareaProps={{
-            placeholder: "Start writing your markdown note..."
-          }}
-          commands={allCommands}
-          extraCommands={extraCommands}
-          previewOptions={{
-             remarkPlugins: [remarkMath, remarkGfm, [remarkToc, { heading: 'toc|目录', tight: true }], remarkEmoji],
-             rehypePlugins: [rehypeKatex],
-             components: {
-               code: Code
-             }
-          }}
-        />
+        <div className="flex-1 overflow-hidden">
+          <div id={cherryContainerId.current} className="h-full w-full" />
+        </div>
+        <div className={`flex justify-between items-center px-4 py-1 text-[10px] border-t ${darkMode ? 'bg-[#0f172a] border-gray-800 text-gray-500' : 'bg-gray-50 border-gray-200 text-gray-400'}`}>
+          <div className="flex gap-4">
+            <span>行数: {stats.lines}</span>
+            <span>单词: {stats.words}</span>
+            <span>字符: {stats.chars}</span>
+          </div>
+          <div className="flex gap-4">
+            <span>Markdown 模式</span>
+            <span>UTF-8</span>
+          </div>
+        </div>
       </div>
     </Suspense>
   );

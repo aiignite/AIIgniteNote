@@ -1,14 +1,15 @@
 
-import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef, useCallback } from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.css';
 import { useNoteAIStore } from '../../store/noteAIStore';
-import Quill from 'quill';
+
+// We'll import these dynamically to avoid SSR issues and ensure correct registration
+let Quill: any = null;
 
 // Set KaTeX to window for Quill formula support
 if (typeof window !== 'undefined') {
   (window as any).katex = katex;
-  (window as any).Quill = Quill;
 }
 
 interface RichTextEditorProps {
@@ -33,6 +34,30 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
   const [internalValue, setInternalValue] = useState(value);
   const quillRef = useRef<any>(null);
   const { setSelection, pushHistory } = useNoteAIStore();
+
+  const exportPdf = useCallback(async (title: string = 'note') => {
+    const { default: jsPDF } = await import('jspdf');
+    const { default: html2canvas } = await import('html2canvas');
+
+    const quillEditor = quillRef.current?.getEditor?.();
+    if (!quillEditor) return;
+
+    const element = quillEditor.root;
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      logging: false
+    });
+
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const imgProps = pdf.getImageProperties(imgData);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`${title || 'note'}.pdf`);
+  }, []);
 
   // 暴露方法给父组件
   useImperativeHandle(ref, () => ({
@@ -95,60 +120,39 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     },
     getContent: () => internalValue,
     exportAsPDF: async (title: string) => {
-      const { default: jsPDF } = await import('jspdf');
-      const { default: html2canvas } = await import('html2canvas');
-      
-      const quillEditor = quillRef.current?.getEditor?.();
-      if (!quillEditor) return;
-      
-      const element = quillEditor.root;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false
-      });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgProps = pdf.getImageProperties(imgData);
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-      
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`${title || 'note'}.pdf`);
+      await exportPdf(title);
     }
-  }), [internalValue, onChange, pushHistory]);
+  }), [internalValue, onChange, pushHistory, exportPdf]);
 
   useEffect(() => {
     // Robust dynamic import
-    Promise.all([
-      import('react-quill'),
-      import('quill-better-table'),
-      import('quill-image-resize-module-react')
-    ])
-      .then(([mod, BetterTable, ImageResize]) => {
-        const Quill = (window as any).Quill;
-        
-        // Register Better Table
-        Quill.register({
-          'modules/better-table': BetterTable.default
-        }, true);
-        
-        // Register Image Resize
-        Quill.register('modules/imageResize', ImageResize.default);
+    const initQuill = async () => {
+      try {
+        const ReactQuillMod = await import('react-quill');
+        const ImageResizeMod = await import('quill-image-resize-module-react');
         
         // Import Quill CSS styles
-        import('react-quill/dist/quill.snow.css');
-        import('quill-better-table/dist/quill-better-table.css');
-        
-        // Handle different export types
-        const Component = mod.default || mod;
+        await import('react-quill/dist/quill.snow.css');
+
+        Quill = ReactQuillMod.Quill;
+        (window as any).Quill = Quill;
+
+        // Register Image Resize
+        try {
+          Quill.register('modules/imageResize', ImageResizeMod.default);
+        } catch (e) {
+          console.warn("ImageResize registration failed", e);
+        }
+
+        const Component = ReactQuillMod.default || ReactQuillMod;
         setQuillComponent(() => Component);
-      })
-      .catch(err => {
+      } catch (err) {
         console.error("Failed to load react-quill and plugins", err);
         setError("Failed to load Rich Text Editor.");
-      });
+      }
+    };
+    
+    initQuill();
   }, []);
 
   // Sync internal value when prop changes
@@ -173,42 +177,32 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     }
   };
 
-  const modules = {
-    toolbar: {
-      container: [
-        [{ 'font': [] }, { 'size': [] }],
-        ['bold', 'italic', 'underline', 'strike'],
-        [{ 'color': [] }, { 'background': [] }],
-        [{ 'script': 'super' }, { 'script': 'sub' }],
-        [{ 'header': '1' }, { 'header': '2' }, 'blockquote', 'code-block'],
-        [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'indent': '-1' }, { 'indent': '+1' }],
-        [{ 'direction': 'rtl' }, { 'align': [] }],
-        ['link', 'image', 'video', 'formula'],
-        ['table'],
-        ['clean']
-      ],
-      handlers: {
-        table: function() {
-          const betterTable = this.quill.getModule('better-table');
-          betterTable.insertTable(3, 3);
-        }
-      }
-    },
-    table: false, // disable original table module
-    'better-table': {
-      operationMenu: {
-        items: {
-          unmergeCells: {
-            text: 'Unmerge Cells'
+  const modules = React.useMemo(() => {
+    return {
+      toolbar: {
+        container: [
+          [{ 'font': [] }, { 'size': [] }],
+          ['bold', 'italic', 'underline', 'strike'],
+          [{ 'color': [] }, { 'background': [] }],
+          [{ 'script': 'super' }, { 'script': 'sub' }],
+          [{ 'header': '1' }, { 'header': '2' }, 'blockquote', 'code-block'],
+          [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'indent': '-1' }, { 'indent': '+1' }],
+          [{ 'direction': 'rtl' }, { 'align': [] }],
+          ['link', 'image', 'video', 'formula'],
+          ['pdf'],
+          ['clean']
+        ],
+        handlers: {
+          pdf: function() {
+            exportPdf('note');
           }
         }
+      },
+      imageResize: {
+        modules: ['Resize', 'DisplaySize', 'Toolbar']
       }
-    },
-    imageResize: {
-      parchment: Quill.import('parchment'),
-      modules: ['Resize', 'DisplaySize', 'Toolbar']
-    },
-  };
+    };
+  }, [exportPdf]);
 
   const formats = [
     'font', 'size',
@@ -217,8 +211,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     'script', 'header', 'blockquote', 'code-block',
     'list', 'bullet', 'indent',
     'direction', 'align',
-    'link', 'image', 'video', 'formula',
-    'better-table'
+    'link', 'image', 'video', 'formula'
   ];
 
   // Handle Quill onChange with validation
@@ -277,8 +270,10 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
           min-height: 100%;
           line-height: 1.6;
         }
-        .rich-text-editor-container .ql-better-table-wrapper {
-          margin: 10px 0;
+        .rich-text-editor-container .ql-pdf::after {
+          content: "PDF";
+          font-size: 12px;
+          font-weight: 600;
         }
       `}</style>
     </div>
