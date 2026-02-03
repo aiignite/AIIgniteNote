@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import 'simple-mind-map/dist/simpleMindMap.esm.css';
 import { useNoteAIStore } from '../../store/noteAIStore';
+import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react';
 
 interface MindMapEditorProps {
   value: string;
@@ -31,6 +32,7 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
   const containerRef = useRef<HTMLDivElement>(null);
   const mindMapRef = useRef<any>(null);
   const ignoreInitialChangeRef = useRef(true);
+  const lastValueRef = useRef(value);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentTheme, setCurrentTheme] = useState(darkMode ? 'dark' : 'default');
@@ -38,6 +40,10 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
   const [themeOptions, setThemeOptions] = useState<Array<{ id: string; name: string; dark?: boolean }>>([
     { id: 'default', name: 'Default' },
   ]);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: any } | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [activeNode, setActiveNode] = useState<any>(null);
+  
   const { setSelection, pushHistory } = useNoteAIStore();
 
   // 暴露方法给父组件
@@ -149,12 +155,13 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
         const module = await import('simple-mind-map');
         const SimpleMindMap: any = module.default || module;
 
-        const [themesModule, themeListModule, selectModule, dragModule, exportModule] = await Promise.all([
+        const [themesModule, themeListModule, selectModule, dragModule, exportModule, rainbowLinesModule] = await Promise.all([
           import('simple-mind-map-plugin-themes'),
           import('simple-mind-map-plugin-themes/themeList'),
           import('simple-mind-map/src/plugins/Select.js'),
           import('simple-mind-map/src/plugins/Drag.js'),
           import('simple-mind-map/src/plugins/Export.js'),
+          import('simple-mind-map/src/plugins/RainbowLines.js'),
         ]);
 
         const Themes = (themesModule as any).default || themesModule;
@@ -180,9 +187,12 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
         const SelectPlugin = (selectModule as any).default || selectModule;
         const DragPlugin = (dragModule as any).default || dragModule;
         const ExportPlugin = (exportModule as any).default || exportModule;
+        const RainbowLinesPlugin = (rainbowLinesModule as any).default || rainbowLinesModule;
+        
         SimpleMindMap.usePlugin(SelectPlugin);
         SimpleMindMap.usePlugin(DragPlugin);
         SimpleMindMap.usePlugin(ExportPlugin);
+        SimpleMindMap.usePlugin(RainbowLinesPlugin);
 
         if (!isMounted) return;
 
@@ -228,25 +238,48 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
               readonly: false,
               enableCtrlKeyNodeSelection: true,
               useLeftKeySelectionRightKeyDrag: false,
+              rainbowLinesConfig: {
+                open: true
+              }
             });
 
             mindMapRef.current = mindMap;
             ignoreInitialChangeRef.current = true;
 
             mindMap.on('data_change', () => {
+              if (ignoreInitialChangeRef.current) return;
+              
               const currentData = mindMap.getData();
-              if (ignoreInitialChangeRef.current) {
-                ignoreInitialChangeRef.current = false;
-                return;
-              }
               if (currentData) {
-                onChange(JSON.stringify(currentData));
+                const newContent = JSON.stringify(currentData);
+                // 只有当内容发生实质性变化时才触发 onChange
+                if (newContent !== lastValueRef.current) {
+                  lastValueRef.current = newContent;
+                  onChange(newContent);
+                }
               }
+            });
+
+            // 监听节点右键菜单事件
+            mindMap.on('node_contextmenu', (e: any, node: any) => {
+              e.preventDefault();
+              setContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                node: node
+              });
+              setActiveNode(node);
+            });
+
+            // 点击画布关闭菜单
+            mindMap.on('draw_click', () => {
+              setContextMenu(null);
             });
 
             // 监听节点选中变化
             mindMap.on('node_active', (node: any, activeNodeList: any[]) => {
               if (activeNodeList && activeNodeList.length > 0) {
+                setActiveNode(activeNodeList[0]);
                 const nodeData = activeNodeList.map((n: any) => ({
                   text: n.nodeData?.data?.text || '',
                   data: n.nodeData
@@ -256,6 +289,7 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
                 setSelection(selectionInfo);
                 onSelectionChange?.(selectionInfo);
               } else {
+                setActiveNode(null);
                 setSelection(null);
                 onSelectionChange?.(null);
               }
@@ -285,6 +319,13 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
 
         // Attempt initial creation
         createMindMapInstance();
+        
+        // 延迟开启变更监听，避开初始化的多次 data_change 事件
+        setTimeout(() => {
+          if (isMounted) {
+            ignoreInitialChangeRef.current = false;
+          }
+        }, 1000);
 
       } catch (err) {
         console.error("Failed to load simple-mind-map:", err);
@@ -380,6 +421,53 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
           mm?.setData(DEFAULT_DATA);
         }
         break;
+      case 'set_node_style':
+        if (value) {
+          const style = JSON.parse(value);
+          const mindMap = mindMapRef.current;
+          let nodes = mindMap?.renderer?.activeNodeList || [];
+          if (nodes.length === 0 && activeNode) {
+            nodes = [activeNode];
+          }
+          if (nodes.length > 0) {
+            nodes.forEach((node: any) => {
+              mindMap?.execCommand('SET_NODE_STYLES', node, style);
+            });
+            // 操作后关闭菜单
+            setContextMenu(null);
+          }
+        }
+        break;
+      case 'set_node_icon':
+        if (value) {
+          const icon = value; // 示例: 'priority_1'
+          const mindMap = mindMapRef.current;
+          let nodes = mindMap?.renderer?.activeNodeList || [];
+          if (nodes.length === 0 && activeNode) {
+            nodes = [activeNode];
+          }
+          if (nodes.length > 0) {
+            nodes.forEach((node: any) => {
+              const currentIcons = node.nodeData.data.icon || [];
+              const type = icon.split('_')[0];
+              // 过滤掉同类型的，添加新的
+              const newIcons = [...currentIcons.filter((i: string) => !i.startsWith(type)), icon];
+              mindMap?.execCommand('SET_NODE_ICON', node, newIcons);
+            });
+            // 操作后关闭菜单
+            setContextMenu(null);
+          }
+        }
+        break;
+    }
+  };
+
+  const handleEmojiClick = (emojiData: any) => {
+    const mm = mindMapRef.current;
+    if (activeNode && mm) {
+      const oldText = activeNode.nodeData.data.text || '';
+      mm.execCommand('SET_NODE_TEXT', activeNode, oldText + emojiData.emoji);
+      setShowEmojiPicker(false);
     }
   };
 
@@ -406,13 +494,11 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
       <div className="flex-none border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-[#15232a] flex flex-wrap items-center px-4 py-1 gap-1 z-10 overflow-x-auto min-h-12">
         {/* Node Operations */}
         <div className="flex items-center gap-1 pr-2 border-r border-gray-200 dark:border-gray-700 h-8">
-          <button onClick={() => handleToolbarAction('add_child')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors" title="Add Child (Tab)">
+          <button onClick={() => handleToolbarAction('add_child')} aria-label="Add Child" className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center transition-colors" title="">
             <span className="material-symbols-outlined text-sm">subdirectory_arrow_right</span>
-            <span className="text-xs font-medium hidden sm:inline">Child</span>
           </button>
-          <button onClick={() => handleToolbarAction('add_sibling')} className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center gap-1 transition-colors" title="Add Sibling (Enter)">
+          <button onClick={() => handleToolbarAction('add_sibling')} aria-label="Add Sibling" className="p-1.5 text-gray-500 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded flex items-center transition-colors" title="">
             <span className="material-symbols-outlined text-sm">add</span>
-            <span className="text-xs font-medium hidden sm:inline">Sibling</span>
           </button>
           <button onClick={() => handleToolbarAction('delete')} className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete Node (Delete)">
             <span className="material-symbols-outlined text-sm">delete</span>
@@ -496,18 +582,112 @@ const MindMapEditor = forwardRef<MindMapEditorRef, MindMapEditorProps>((props, r
         ref={containerRef}
         onContextMenu={(event) => event.preventDefault()}
         className="flex-1 w-full h-full relative cursor-grab active:cursor-grabbing"
-      />
+        />
+
+        {/* Context Menu */}
+        {contextMenu && (
+          <div 
+            className="fixed bg-white dark:bg-gray-800 shadow-xl border border-gray-200 dark:border-gray-700 rounded-lg py-2 z-[100] min-w-48 backdrop-blur-md bg-white/95 dark:bg-gray-800/95"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider flex justify-between items-center">
+              <span>Node Style</span>
+              <button onClick={() => setContextMenu(null)} className="hover:text-red-500">
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+            
+            {/* Colors */}
+            <div className="px-3 py-1 grid grid-cols-5 gap-1 border-b border-gray-100 dark:border-gray-700 pb-2 mb-1">
+              {[
+                '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
+                '#ec4899', '#06b6d4', '#f97316', '#6366f1', '#14b8a6'
+              ].map(color => (
+                <button 
+                  key={color}
+                  onClick={() => handleToolbarAction('set_node_style', JSON.stringify({ fillColor: color, color: '#fff' }))}
+                  className="size-5 rounded-full border border-black/10 transition-transform hover:scale-125 shadow-sm"
+                  style={{ backgroundColor: color }}
+                />
+              ))}
+              <button 
+                onClick={() => handleToolbarAction('set_node_style', JSON.stringify({ fillColor: 'transparent', color: '' }))}
+                className="size-5 rounded-full border border-gray-300 dark:border-gray-600 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                title="Reset Color"
+              >
+                <span className="material-symbols-outlined text-[12px]">format_color_reset</span>
+              </button>
+            </div>
+
+            <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Quick Icons</div>
+            <div className="px-3 py-1 border-b border-gray-100 dark:border-gray-700 pb-2 mb-1 flex flex-wrap gap-2">
+              {[1, 2, 3, 4, 5].map(p => (
+                <button 
+                  key={p}
+                  onClick={() => handleToolbarAction('set_node_icon', `priority_${p}`)}
+                  className="text-white bg-primary/20 hover:bg-primary/40 rounded px-1.5 py-0.5 text-[10px] font-bold"
+                >
+                  P{p}
+                </button>
+              ))}
+              <button 
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                className="text-gray-500 hover:text-primary rounded px-1.5 py-0.5 text-[10px] font-bold flex items-center gap-1"
+              >
+                <span className="material-symbols-outlined text-xs">mood</span> Emoji
+              </button>
+            </div>
+
+            <button 
+              onClick={() => {
+                handleToolbarAction('add_child');
+                setContextMenu(null);
+              }}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+            >
+              <span className="material-symbols-outlined text-sm">subdirectory_arrow_right</span>
+              <span className="ml-2">Add Child</span>
+            </button>
+            <button 
+              onClick={() => {
+                handleToolbarAction('add_sibling');
+                setContextMenu(null);
+              }}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+            >
+              <span className="material-symbols-outlined text-sm">add</span>
+              <span className="ml-2">Add Sibling</span>
+            </button>
+            <div className="h-px bg-gray-100 dark:bg-gray-700 my-1" />
+            <button 
+              onClick={() => {
+                handleToolbarAction('delete');
+                setContextMenu(null);
+              }}
+              className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+            >
+              <span className="material-symbols-outlined text-sm">delete</span>
+              Delete Node
+              <span className="ml-auto text-[10px] opacity-70">Del</span>
+            </button>
+          </div>
+        )}
+
+        {/* Emoji Picker Overlay */}
+        {showEmojiPicker && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/20" onClick={() => setShowEmojiPicker(false)}>
+            <div onClick={e => e.stopPropagation()}>
+              <EmojiPicker 
+                onEmojiClick={handleEmojiClick}
+                theme={darkMode ? EmojiTheme.DARK : EmojiTheme.LIGHT}
+                autoFocusSearch={true}
+              />
+            </div>
+          </div>
+        )}
       
-      {/* Shortcuts Help */}
-      <div className="absolute bottom-4 right-4 bg-white/90 dark:bg-gray-800/90 p-3 rounded-lg shadow-lg border border-gray-100 dark:border-gray-700 text-[10px] text-gray-500 pointer-events-none backdrop-blur-sm z-10 transition-opacity hover:opacity-0">
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-          <span className="font-bold">Tab</span> <span>Add Child</span>
-          <span className="font-bold">Enter</span> <span>Add Sibling</span>
-          <span className="font-bold">Del</span> <span>Remove</span>
-          <span className="font-bold">Ctrl + +/-</span> <span>Zoom</span>
-          <span className="font-bold">Drag</span> <span>Move Canvas</span>
-        </div>
-      </div>
+
     </div>
   );
 });
