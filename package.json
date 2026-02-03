@@ -9,6 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@blocknote/core": "^0.46.2",
+    "@blocknote/mantine": "^0.46.2",
+    "@blocknote/react": "^0.46.2",
     "@google/genai": "^1.37.0",
     "@svgdotjs/svg.js": "3.2.0",
     "@types/katex": "^0.16.8",

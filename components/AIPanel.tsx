@@ -2868,32 +2868,9 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
           </div>
         )}
         
-        <div className="flex items-center gap-2 mb-2">
-          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Quick Actions</p>
-          {currentNoteType && (
-            <span className={`px-1.5 py-0.5 text-[8px] font-medium rounded ${
-              currentNoteType === 'Markdown' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' :
-              currentNoteType === 'Rich Text' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' :
-              currentNoteType === 'Mind Map' ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400' :
-              'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
-            }`}>
-              {currentNoteType}
-            </span>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {smartActions.map(action => (
-            <button
-              key={action.label}
-              onClick={() => handleSmartAction(action)}
-              className="flex items-center gap-1 px-2 py-1 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-[10px] text-gray-600 dark:text-gray-300 transition-colors"
-            >
-              <span className="material-symbols-outlined text-[12px]">{action.icon}</span>
-              <span>{action.label}</span>
-            </button>
-          ))}
-        </div>
+        {/* Quick Actions removed from here */}
       </div>
+
 
       {/* Input Area */}
       <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-[#15232a]">
@@ -2924,50 +2901,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
         )}
 
         <div className="flex items-end gap-2">
-          {/* Attachment Button */}
-          <div className="relative">
-            <button
-              onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
-              className="p-2 bg-white dark:bg-[#1c2b33] hover:bg-gray-50 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl transition-colors"
-              title="Add attachment"
-            >
-              <span className="material-symbols-outlined text-sm text-gray-600 dark:text-gray-400">add_circle</span>
-            </button>
 
-            {showAttachmentMenu && (
-              <div className="absolute bottom-full left-0 mb-2 w-48 bg-white dark:bg-[#1c2b33] rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-200">
-                <button
-                  onClick={() => {
-                    fileInputRef.current?.click();
-                    setShowAttachmentMenu(false);
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
-                >
-                  <span className="material-symbols-outlined text-sm">upload_file</span>
-                  <span className="text-gray-700 dark:text-gray-300">Upload File</span>
-                </button>
-                <button
-                  onClick={() => {
-                    fileInputRef.current?.click();
-                    setShowAttachmentMenu(false);
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
-                >
-                  <span className="material-symbols-outlined text-sm">image</span>
-                  <span className="text-gray-700 dark:text-gray-300">Add Image</span>
-                </button>
-              </div>
-            )}
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
-            />
-          </div>
 
           {/* Voice Input Button */}
           {recognition && (
@@ -3120,84 +3054,13 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
               快捷
             </button>
             <button
-              onClick={() => setShowPromptManager(!showPromptManager)}
-              className="text-[10px] px-2 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 text-gray-600 dark:text-gray-400 rounded-lg transition-colors flex items-center gap-1"
-              title="提示词管理"
+              onClick={exportAllData}
+              className="text-[10px] px-2 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-green-100 dark:hover:bg-green-900/30 text-gray-600 dark:text-gray-400 rounded-lg transition-colors flex items-center gap-1"
+              title="导出全部数据"
             >
-              <span className="material-symbols-outlined text-[12px]">psychology</span>
-              提示词
+              <span className="material-symbols-outlined text-[12px]">download</span>
+              导出
             </button>
-            <div className="relative">
-              <button
-                onClick={() => setShowDataMenu(!showDataMenu)}
-                className="text-[10px] px-2 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-lg transition-colors flex items-center gap-1"
-                title="数据管理"
-              >
-                <span className="material-symbols-outlined text-[12px]">settings</span>
-                数据
-                <span className={`material-symbols-outlined text-[10px] transition-transform ${showDataMenu ? 'rotate-180' : ''}`}>expand_more</span>
-              </button>
-
-              {showDataMenu && (
-                <div className="absolute bottom-full left-0 mb-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden z-20 animate-in fade-in zoom-in-95 duration-200 min-w-[150px]">
-                  <div className="px-2 py-1.5 border-b border-gray-200 dark:border-gray-700 text-[9px] text-gray-500 font-medium">
-                    数据管理
-                  </div>
-                  <button
-                    onClick={() => {
-                      exportAllData();
-                      setShowDataMenu(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-sm text-gray-500">download</span>
-                    <span>导出数据</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      clearFavorites();
-                      setShowDataMenu(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-sm text-gray-500">star_off</span>
-                    <span>清除收藏</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      clearAllData();
-                      setShowDataMenu(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 transition-colors flex items-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-sm">delete_forever</span>
-                    <span>清除所有</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="text-[9px] text-gray-400 flex items-center gap-3">
-            {/* Network status */}
-            <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded ${isOnline ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400'}`} title={isOnline ? '网络连接正常' : '网络连接断开'}>
-              <span className="material-symbols-outlined text-[10px]">
-                {isOnline ? 'wifi' : 'wifi_off'}
-              </span>
-            </div>
-
-            {/* Draft saved indicator */}
-            {draftSaved && (
-              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400" title="草稿已自动保存">
-                <span className="material-symbols-outlined text-[10px]">save</span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              <span>{messageStats.totalMessages} 条</span>
-              <span>•</span>
-              <span>~{messageStats.totalTokens} tokens</span>
-            </div>
           </div>
         </div>
 
@@ -3247,20 +3110,40 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
           </div>
         )}
 
-        {/* Quick Reply Templates */}
+        {/* Quick Reply Templates & Smart Actions */}
         {showTemplates && (
-          <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
-            <div className="text-[9px] text-gray-500 mb-1.5 px-1">快捷回复</div>
-            <div className="flex flex-wrap gap-1.5">
-              {QUICK_REPLIES.map((reply, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => insertQuickReply(reply.text)}
-                  className="text-[10px] px-2 py-1 bg-white dark:bg-gray-800 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 border border-gray-200 dark:border-gray-700 rounded-md transition-colors"
-                >
-                  {reply.label}
-                </button>
-              ))}
+          <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg space-y-3">
+             {/* Smart Actions (Context Aware) */}
+             <div>
+              <div className="text-[9px] text-gray-500 mb-1.5 px-1 font-medium">智能操作</div>
+              <div className="flex flex-wrap gap-1.5">
+                {smartActions.slice(0, 5).map(action => (
+                  <button
+                    key={action.label}
+                    onClick={() => handleSmartAction(action)}
+                    className="flex items-center gap-1 px-2 py-1 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-gray-200 dark:border-gray-700 rounded-md text-[10px] text-gray-600 dark:text-gray-300 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[10px]">{action.icon}</span>
+                    <span>{action.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Existing Quick Replies */}
+            <div>
+              <div className="text-[9px] text-gray-500 mb-1.5 px-1 font-medium">快捷回复</div>
+              <div className="flex flex-wrap gap-1.5">
+                {QUICK_REPLIES.map((reply, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => insertQuickReply(reply.text)}
+                    className="text-[10px] px-2 py-1 bg-white dark:bg-gray-800 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 border border-gray-200 dark:border-gray-700 rounded-md transition-colors"
+                  >
+                    {reply.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}

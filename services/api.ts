@@ -885,6 +885,32 @@ class APIClient {
     });
   }
 
+  // Note Attachment Endpoints
+  async uploadNoteAttachment(noteId: string, file: File): Promise<any> {
+    await this.ensureInitialized();
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = `${this.baseURL}/api/notes/${noteId}/attachments`;
+    const headers: HeadersInit = {};
+
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    const result = await this.handleResponse<{ success: true; data: any }>(response);
+    if (result?.data?.fileUrl) {
+      result.data.fullUrl = `${this.baseURL}${result.data.fileUrl}`;
+    }
+    return result;
+  }
+
   // AI Attachment Endpoints
   async uploadAIAttachment(file: File): Promise<any> {
     await this.ensureInitialized();

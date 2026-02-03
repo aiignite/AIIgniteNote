@@ -2,6 +2,25 @@
 import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef, useCallback } from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.css';
+import '@blocknote/core/fonts/inter.css';
+import '@blocknote/mantine/style.css';
+import { BlockNoteView } from '@blocknote/mantine';
+import {
+  useCreateBlockNote,
+  BlockTypeSelect,
+  BasicTextStyleButton,
+  TextAlignButton,
+  ColorStyleButton,
+  CreateLinkButton,
+  NestBlockButton,
+  UnnestBlockButton,
+  FileCaptionButton,
+  FileReplaceButton,
+  FilePreviewButton,
+  TableCellMergeButton,
+  BlockNoteViewEditor
+} from '@blocknote/react';
+import { api } from '../../services/api';
 import { useNoteAIStore } from '../../store/noteAIStore';
 
 // We'll import these dynamically to avoid SSR issues and ensure correct registration
@@ -32,17 +51,26 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
   const [QuillComponent, setQuillComponent] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [internalValue, setInternalValue] = useState(value);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const quillRef = useRef<any>(null);
-  const { setSelection, pushHistory } = useNoteAIStore();
+  const blockNoteContainerRef = useRef<HTMLDivElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastValueRef = useRef<string | null>(null);
+  const isApplyingExternalValueRef = useRef(false);
+  const { setSelection, pushHistory, currentNoteId } = useNoteAIStore();
+
+  const useBlockNote = true;
+  const blockNoteEditor = useCreateBlockNote();
 
   const exportPdf = useCallback(async (title: string = 'note') => {
     const { default: jsPDF } = await import('jspdf');
     const { default: html2canvas } = await import('html2canvas');
 
-    const quillEditor = quillRef.current?.getEditor?.();
-    if (!quillEditor) return;
-
-    const element = quillEditor.root;
+    const element = useBlockNote
+      ? (blockNoteContainerRef.current?.querySelector('.bn-editor') as HTMLElement | null)
+      : quillRef.current?.getEditor?.()?.root;
+    if (!element) return;
     const canvas = await html2canvas(element, {
       scale: 2,
       useCORS: true,
@@ -59,9 +87,40 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     pdf.save(`${title || 'note'}.pdf`);
   }, []);
 
+  const exportHtml = useCallback(async (title: string = 'note') => {
+    const html = useBlockNote
+      ? await blockNoteEditor.blocksToHTMLLossy(blockNoteEditor.document)
+      : internalValue;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title || 'note'}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [blockNoteEditor, internalValue, useBlockNote]);
+
+  const exportMarkdown = useCallback(async (title: string = 'note') => {
+    const markdown = useBlockNote
+      ? await blockNoteEditor.blocksToMarkdownLossy(blockNoteEditor.document)
+      : internalValue;
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title || 'note'}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [blockNoteEditor, internalValue, useBlockNote]);
+
   // 暴露方法给父组件
   useImperativeHandle(ref, () => ({
     getSelection: () => {
+      if (useBlockNote) return null;
       const quill = quillRef.current?.getEditor?.();
       if (!quill) return null;
       
@@ -73,7 +132,26 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
       
       return { text, html };
     },
-    insertContent: (content: string, position: 'cursor' | 'end' | 'replace' = 'cursor') => {
+    insertContent: async (content: string, position: 'cursor' | 'end' | 'replace' = 'cursor') => {
+      if (useBlockNote) {
+        const currentHtml = await blockNoteEditor.blocksToHTMLLossy(blockNoteEditor.document);
+        let nextHtml = currentHtml;
+        if (position === 'replace') {
+          nextHtml = content;
+        } else if (position === 'end') {
+          nextHtml = `${currentHtml}${content}`;
+        } else {
+          nextHtml = `${content}${currentHtml}`;
+        }
+        const blocks = await blockNoteEditor.tryParseHTMLToBlocks(nextHtml);
+        isApplyingExternalValueRef.current = true;
+        blockNoteEditor.replaceBlocks(blockNoteEditor.document, blocks);
+        isApplyingExternalValueRef.current = false;
+        setInternalValue(nextHtml);
+        onChange(JSON.stringify(blockNoteEditor.document));
+        pushHistory(nextHtml, 'ai-import');
+        return;
+      }
       const quill = quillRef.current?.getEditor?.();
       if (!quill) {
         // 如果Quill还没加载，直接操作内部值
@@ -108,7 +186,17 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
       onChange(newValue);
       pushHistory(newValue, 'ai-import');
     },
-    replaceContent: (content: string) => {
+    replaceContent: async (content: string) => {
+      if (useBlockNote) {
+        const blocks = await blockNoteEditor.tryParseHTMLToBlocks(content);
+        isApplyingExternalValueRef.current = true;
+        blockNoteEditor.replaceBlocks(blockNoteEditor.document, blocks);
+        isApplyingExternalValueRef.current = false;
+        setInternalValue(content);
+        onChange(JSON.stringify(blockNoteEditor.document));
+        pushHistory(content, 'ai-import');
+        return;
+      }
       const quill = quillRef.current?.getEditor?.();
       if (quill) {
         quill.setContents([]);
@@ -122,9 +210,35 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     exportAsPDF: async (title: string) => {
       await exportPdf(title);
     }
-  }), [internalValue, onChange, pushHistory, exportPdf]);
+  }), [internalValue, onChange, pushHistory, exportPdf, blockNoteEditor, useBlockNote]);
 
   useEffect(() => {
+    if (!useBlockNote) return;
+    const applyExternalValue = async () => {
+      if (lastValueRef.current !== null && value === lastValueRef.current) return;
+      let blocks: any[] | null = null;
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) {
+          blocks = parsed;
+        }
+      } catch (e) {
+        blocks = null;
+      }
+      if (!blocks) {
+        blocks = await blockNoteEditor.tryParseHTMLToBlocks(value || '<p></p>');
+      }
+      isApplyingExternalValueRef.current = true;
+      blockNoteEditor.replaceBlocks(blockNoteEditor.document, blocks);
+      isApplyingExternalValueRef.current = false;
+      setInternalValue(value);
+      lastValueRef.current = value;
+    };
+    applyExternalValue();
+  }, [value, blockNoteEditor, useBlockNote]);
+
+  useEffect(() => {
+    if (useBlockNote) return;
     // Robust dynamic import
     const initQuill = async () => {
       try {
@@ -153,7 +267,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     };
     
     initQuill();
-  }, []);
+  }, [useBlockNote]);
 
   // Sync internal value when prop changes
   useEffect(() => {
@@ -237,7 +351,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     );
   }
 
-  if (!QuillComponent) {
+  if (!useBlockNote && !QuillComponent) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-transparent">
         <div className="flex flex-col items-center gap-3">
@@ -250,17 +364,373 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
 
   return (
     <div className="h-full w-full flex flex-col bg-transparent rich-text-editor-container">
-      <QuillComponent
-        ref={quillRef}
-        theme="snow"
-        value={internalValue}
-        onChange={handleChange}
-        onChangeSelection={handleSelectionChange}
-        modules={modules}
-        formats={formats}
-        className="h-full flex flex-col"
-        placeholder="Start writing rich text..."
-      />
+      {useBlockNote ? (
+        <div
+          ref={blockNoteContainerRef}
+          className="h-full w-full flex flex-col"
+          onClick={(e) => {
+            const target = e.target as HTMLElement;
+            const fileBlock = target.closest('.bn-file-block-content-wrapper');
+            if (!fileBlock) return;
+            const cursor = blockNoteEditor.getTextCursorPosition();
+            const block = blockNoteEditor.getBlock(cursor.block);
+            if (block?.type === 'file' && (block as any).props?.url) {
+              window.open((block as any).props.url, '_blank');
+            }
+          }}
+        >
+          <BlockNoteView
+            className="flex-1 overflow-y-auto"
+            editor={blockNoteEditor}
+            renderEditor={false}
+            formattingToolbar={false}
+            slashMenu={true}
+            sideMenu={true}
+            linkToolbar={true}
+            tableHandles={true}
+            emojiPicker={true}
+            onChange={async () => {
+              if (isApplyingExternalValueRef.current) return;
+              const json = JSON.stringify(blockNoteEditor.document);
+              setInternalValue(json);
+              lastValueRef.current = json;
+              onChange(json);
+            }}
+          >
+            <div className="sticky top-0 z-10 bg-white/90 dark:bg-[#0c1419]/90 backdrop-blur border-b border-gray-200 dark:border-gray-800 flex items-center gap-2 px-3 py-2 flex-wrap">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    if (!currentNoteId) throw new Error('Missing noteId');
+                    const response = await api.uploadNoteAttachment(currentNoteId, file);
+                    const url = response?.data?.fullUrl || response?.data?.fileUrl;
+                    if (!url) throw new Error('Upload failed');
+                    const cursor = blockNoteEditor.getTextCursorPosition();
+                    blockNoteEditor.insertBlocks(
+                      [{ type: 'image', props: { url } }],
+                      cursor.block,
+                      'after'
+                    );
+                  } catch (err) {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const url = reader.result as string;
+                      const cursor = blockNoteEditor.getTextCursorPosition();
+                      blockNoteEditor.insertBlocks(
+                        [{ type: 'image', props: { url } }],
+                        cursor.block,
+                        'after'
+                      );
+                    };
+                    reader.readAsDataURL(file);
+                  } finally {
+                    if (imageInputRef.current) imageInputRef.current.value = '';
+                  }
+                }}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    if (!currentNoteId) throw new Error('Missing noteId');
+                    const response = await api.uploadNoteAttachment(currentNoteId, file);
+                    const url = response?.data?.fullUrl || response?.data?.fileUrl;
+                    if (!url) throw new Error('Upload failed');
+                    const cursor = blockNoteEditor.getTextCursorPosition();
+                    blockNoteEditor.insertBlocks(
+                      [{ type: 'file', props: { url, name: file.name } }],
+                      cursor.block,
+                      'after'
+                    );
+                  } catch (err) {
+                    const url = URL.createObjectURL(file);
+                    const cursor = blockNoteEditor.getTextCursorPosition();
+                    blockNoteEditor.insertBlocks(
+                      [{ type: 'file', props: { url, name: file.name } }],
+                      cursor.block,
+                      'after'
+                    );
+                  } finally {
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }
+                }}
+              />
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="撤销"
+                onClick={() => blockNoteEditor.undo()}
+              >
+                <span className="material-symbols-outlined text-[16px]">undo</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="重做"
+                onClick={() => blockNoteEditor.redo()}
+              >
+                <span className="material-symbols-outlined text-[16px]">redo</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="标题1"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { type: 'heading', props: { level: 1 } });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">title</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="标题2"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { type: 'heading', props: { level: 2 } });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_h2</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="标题3"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { type: 'heading', props: { level: 3 } });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_h3</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="无序列表"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { type: 'bulletListItem' });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_list_bulleted</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="有序列表"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { type: 'numberedListItem' });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_list_numbered</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="任务列表"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { type: 'checkListItem' });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">checklist</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="引用"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { type: 'quote' });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_quote</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="代码块"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { type: 'codeBlock' });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">code</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="加粗"
+                onClick={() => blockNoteEditor.toggleStyles({ bold: true })}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_bold</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="斜体"
+                onClick={() => blockNoteEditor.toggleStyles({ italic: true })}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_italic</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="下划线"
+                onClick={() => blockNoteEditor.toggleStyles({ underline: true })}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_underlined</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="删除线"
+                onClick={() => blockNoteEditor.toggleStyles({ strike: true })}
+              >
+                <span className="material-symbols-outlined text-[16px]">strikethrough_s</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="行内代码"
+                onClick={() => blockNoteEditor.toggleStyles({ code: true })}
+              >
+                <span className="material-symbols-outlined text-[16px]">code</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="左对齐"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { props: { textAlignment: 'left' } });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_align_left</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="居中"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { props: { textAlignment: 'center' } });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_align_center</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="右对齐"
+                onClick={() => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  blockNoteEditor.updateBlock(cursor.block, { props: { textAlignment: 'right' } });
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">format_align_right</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="下载文件"
+                onClick={async () => {
+                  const cursor = blockNoteEditor.getTextCursorPosition();
+                  const block = blockNoteEditor.getBlock(cursor.block) as any;
+                  if (block?.type !== 'file' || !block?.props?.url) return;
+                  const url = block.props.url;
+                  const name = block.props.name || 'file';
+                  try {
+                    const res = await fetch(url);
+                    const blob = await res.blob();
+                    const objectUrl = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = objectUrl;
+                    a.download = name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(objectUrl);
+                  } catch (e) {
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }
+                }}
+              >
+                <span className="material-symbols-outlined text-[16px]">file_download</span>
+              </button>
+              {/* <TableCellMergeButton key="tableCellMergeButton" /> */}
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="插入图片"
+                onClick={() => imageInputRef.current?.click()}
+              >
+                <span className="material-symbols-outlined text-[16px]">image</span>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="插入文件"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <span className="material-symbols-outlined text-[16px]">attach_file</span>
+              </button>
+              <div className="relative">
+                <button
+                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                  title="导出"
+                  onClick={() => setShowExportMenu(!showExportMenu)}
+                >
+                  <span className="material-symbols-outlined text-[16px]">ios_share</span>
+                </button>
+                {showExportMenu && (
+                  <div className="absolute left-0 mt-1 w-28 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0c1419] shadow-lg z-20">
+                    <button
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-800"
+                      onClick={() => {
+                        setShowExportMenu(false);
+                        exportPdf('note');
+                      }}
+                    >
+                      导出PDF
+                    </button>
+                    <button
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-800"
+                      onClick={() => {
+                        setShowExportMenu(false);
+                        exportHtml('note');
+                      }}
+                    >
+                      导出HTML
+                    </button>
+                    <button
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-800"
+                      onClick={() => {
+                        setShowExportMenu(false);
+                        exportMarkdown('note');
+                      }}
+                    >
+                      导出MD
+                    </button>
+                  </div>
+                )}
+              </div>
+              <span className="text-[10px] text-gray-400">/ 可唤起块菜单</span>
+            </div>
+            <div className="min-h-[500px]">
+              <BlockNoteViewEditor />
+            </div>
+          </BlockNoteView>
+        </div>
+      ) : (
+        <QuillComponent
+          ref={quillRef}
+          theme="snow"
+          value={internalValue}
+          onChange={handleChange}
+          onChangeSelection={handleSelectionChange}
+          modules={modules}
+          formats={formats}
+          className="h-full flex flex-col"
+          placeholder="Start writing rich text..."
+        />
+      )}
       <style>{`
         .rich-text-editor-container .ql-container {
           font-family: 'Inter', -apple-system, system-ui, sans-serif;
