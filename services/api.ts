@@ -114,6 +114,7 @@ export interface AIChatRequest {
   }>;
   conversationId?: string;
   attachmentIds?: string[];
+  images?: string[]; // Base64 encoded images for vision models
   model?: string;
   options?: {
     model?: string;
@@ -139,6 +140,23 @@ export interface AIConversation {
   createdAt: string;
   updatedAt: string;
   messageCount: number;
+}
+
+export interface AIModelInput {
+  name: string;
+  modelId: string;
+  provider: string;
+  endpoint?: string;
+  apiKey?: string;
+  popularity?: number;
+  speed?: string;
+  cost?: string;
+  context?: string;
+  description?: string;
+  defaultTemplateId?: string;
+  isDefault?: boolean;
+  supportsImage?: boolean;
+  supportsText?: boolean;
 }
 
 // Folder types
@@ -690,16 +708,18 @@ class APIClient {
    * @param onChunk Callback for each chunk of data
    * @param onComplete Callback when streaming is complete
    * @param onError Callback for errors
-   * @returns AbortController to cancel the stream
+   * @param controller Optional AbortController to cancel the stream
+   * @returns AbortController used for the stream
    */
   async chatAIStream(
     data: AIChatRequest,
     onChunk: (chunk: string, done: boolean, conversationId?: string) => void,
     onComplete?: (conversationId?: string) => void,
-    onError?: (error: any) => void
+    onError?: (error: any) => void,
+    controller?: AbortController
   ): Promise<AbortController> {
     await this.ensureInitialized();
-    const controller = new AbortController();
+    const streamController = controller || new AbortController();
     const url = `${this.baseURL}/api/ai/chat/stream`;
 
     const headers: HeadersInit = {
@@ -710,19 +730,22 @@ class APIClient {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let finalConversationId: string | undefined;
+
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(data),
-        signal: controller.signal,
+        signal: streamController.signal,
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
+      reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
       if (!reader) {
@@ -730,9 +753,19 @@ class APIClient {
       }
 
       let buffer = '';
-      let finalConversationId: string | undefined;
 
       while (true) {
+        // 检查是否已中止
+        if (streamController.signal.aborted) {
+          console.log('[chatAIStream] Stream aborted, stopping read loop');
+          try {
+            await reader.cancel();
+          } catch (e) {
+            // 忽略取消错误
+          }
+          break;
+        }
+
         const { done, value } = await reader.read();
 
         if (done) {
@@ -753,8 +786,8 @@ class APIClient {
             // Check for DONE signal
             if (data === '[DONE]') {
               if (onComplete) onComplete(finalConversationId);
-              controller.abort();
-              return controller;
+              streamController.abort();
+              return streamController;
             }
 
             try {
@@ -764,8 +797,8 @@ class APIClient {
               // Handle error in stream
               if (parsed.error) {
                 if (onError) onError(parsed);
-                controller.abort();
-                return controller;
+                streamController.abort();
+                return streamController;
               }
 
               // Extract content and conversation ID
@@ -781,8 +814,8 @@ class APIClient {
 
               if (done) {
                 if (onComplete) onComplete(finalConversationId);
-                controller.abort();
-                return controller;
+                streamController.abort();
+                return streamController;
               }
             } catch (e) {
               // Ignore JSON parse errors for non-JSON lines
@@ -793,14 +826,25 @@ class APIClient {
       }
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.log('Stream was aborted');
+        console.log('[chatAIStream] Stream was aborted by user');
+        // 用户主动停止时，仍然调用 onComplete 以更新 UI 状态
+        if (onComplete) onComplete(finalConversationId);
       } else {
         console.error('Stream error:', error);
         if (onError) onError(error);
       }
+    } finally {
+      // 确保 reader 被正确关闭
+      try {
+        if (reader) {
+          await reader.cancel();
+        }
+      } catch (e) {
+        // 忽略取消错误
+      }
     }
 
-    return controller;
+    return streamController;
   }
 
   async getAIConversations() {
@@ -854,25 +898,14 @@ class APIClient {
     return this.request('/api/ai/models');
   }
 
-  async createAIModel(data: {
-    name: string;
-    modelId: string;
-    provider: string;
-    endpoint?: string;
-    apiKey?: string;
-    popularity?: number;
-    speed?: string;
-    cost?: string;
-    context?: string;
-    description?: string;
-  }) {
+  async createAIModel(data: AIModelInput) {
     return this.request('/api/ai/models', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async updateAIModel(id: string, data: any) {
+  async updateAIModel(id: string, data: Partial<AIModelInput>) {
     return this.request(`/api/ai/models/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -917,7 +950,7 @@ class APIClient {
     const formData = new FormData();
     formData.append('file', file);
 
-    const url = `${this.baseURL}/api/ai/attachments/upload`;
+    const url = `${this.baseURL}/api/ai-attachments/upload`;
     const headers: HeadersInit = {};
 
     if (this.accessToken) {
@@ -934,11 +967,11 @@ class APIClient {
   }
 
   async getAIAttachment(id: string) {
-    return this.request(`/api/ai/attachments/${id}`);
+    return this.request(`/api/ai-attachments/${id}`);
   }
 
   async deleteAIAttachment(id: string) {
-    return this.request(`/api/ai/attachments/${id}`, {
+    return this.request(`/api/ai-attachments/${id}`, {
       method: 'DELETE',
     });
   }
@@ -1195,6 +1228,7 @@ class APIClient {
     maxTokens?: number;
     enableMemory?: boolean;
     enableWebSearch?: boolean;
+    isDefault?: boolean;
   }) {
     return this.request<{ success: true; data: any }>(`/api/ai-assistants/${id}`, {
       method: 'PUT',
