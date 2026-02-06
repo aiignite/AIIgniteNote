@@ -885,9 +885,25 @@ const App: React.FC = () => {
   // Apply theme color to CSS variables whenever primaryColor changes
   useEffect(() => {
     const theme = getTheme();
-    // Tailwind v4 需要使用 var() 格式引用内置颜色变量
-    document.documentElement.style.setProperty('--color-primary', theme.tailwindVar);
-    document.documentElement.style.setProperty('--color-background-light', theme.tailwindBgVar);
+    const root = document.documentElement;
+    
+    console.log('Theme changed to:', primaryColor, 'palette[600]:', theme.palette[600]);
+    
+    // 设置 :root 中定义的 --theme-primary 变量，这些变量被 @theme inline 引用
+    root.style.setProperty('--theme-primary', theme.palette[600]);
+    root.style.setProperty('--theme-primary-50', theme.palette[50]);
+    root.style.setProperty('--theme-primary-100', theme.palette[100]);
+    root.style.setProperty('--theme-primary-200', theme.palette[200]);
+    root.style.setProperty('--theme-primary-300', theme.palette[300]);
+    root.style.setProperty('--theme-primary-400', theme.palette[400]);
+    root.style.setProperty('--theme-primary-500', theme.palette[500]);
+    root.style.setProperty('--theme-primary-600', theme.palette[600]);
+    root.style.setProperty('--theme-primary-700', theme.palette[700]);
+    root.style.setProperty('--theme-primary-800', theme.palette[800]);
+    root.style.setProperty('--theme-primary-900', theme.palette[900]);
+    
+    // 验证设置是否成功
+    console.log('CSS variable --theme-primary set to:', getComputedStyle(root).getPropertyValue('--theme-primary'));
   }, [primaryColor, getTheme]);
 
   // Handle Resizing Logic
@@ -1052,10 +1068,9 @@ const App: React.FC = () => {
         currentView={currentView}
         onViewChange={setCurrentView}
         onLogout={handleLogout}
-        syncStatus={renderSyncStatus()}
       />
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden h-full">
         {renderContent()}
 
         {isAuthenticated && <Chat />}

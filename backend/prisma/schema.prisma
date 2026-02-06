@@ -365,6 +365,8 @@ model AIModel {
   cost        String   @default("$")
   context     String   @default("128K")
   description String?
+  supportsText Boolean @default(true) @map("supports_text")
+  supportsImage Boolean @default(false) @map("supports_image")
   defaultTemplateId String? @map("default_template_id")
   userId      String?
   workspaceId String?

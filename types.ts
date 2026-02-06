@@ -72,6 +72,21 @@ export interface ChatMessage {
   type?: 'checklist' | 'text' | 'mindmap' | 'actions';
   items?: { label: string; checked: boolean }[];
   suggestions?: { label: string; icon: string }[];
+  timestamp?: Date; // 消息时间戳
+  isBookmarked?: boolean; // 是否已书签
+  rating?: 1 | 2 | 3 | 4 | 5; // AI回答评分 (1-5星)
+  isPinned?: boolean; // 是否置顶/钉选
+  responseTime?: number; // AI响应时间(毫秒)
+  tokenCount?: number; // 估算token数
+  attachments?: Array<{
+    type: string;
+    name: string;
+    url?: string;
+    content?: string;
+  }>; // 附件列表
+  error?: boolean; // 是否为错误消息
+  editedAt?: Date; // 编辑时间
+  stopped?: boolean; // 是否被用户停止生成
 }
 
 export interface AppUser {

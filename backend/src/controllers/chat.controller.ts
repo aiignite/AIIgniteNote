@@ -5,16 +5,34 @@ import { AuthRequest } from '../middleware/auth';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import { config } from '../config';
+
+// 使用 __dirname 确保路径在编译后正确
+// 上传目录：backend/uploads/chat
+const chatUploadDir = path.resolve(__dirname, '../../uploads/chat');
+console.log('[ChatController] Chat upload directory:', chatUploadDir);
+
+// 确保上传目录存在
+if (!fsSync.existsSync(chatUploadDir)) {
+  console.log('[ChatController] Creating chat upload directory...');
+  fsSync.mkdirSync(chatUploadDir, { recursive: true });
+}
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    const dir = path.resolve(process.cwd(), config.uploadDir, 'chat');
-    cb(null, dir);
+    // 确保目录存在
+    if (!fsSync.existsSync(chatUploadDir)) {
+      fsSync.mkdirSync(chatUploadDir, { recursive: true });
+    }
+    cb(null, chatUploadDir);
   },
   filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
+    // 处理中文文件名
+    const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const ext = path.extname(originalName);
+    cb(null, uniqueSuffix + ext);
   }
 });
 
@@ -686,29 +704,47 @@ export class ChatController {
   };
 
   uploadFile = async (req: Request, res: Response): Promise<void> => {
+    console.log('[ChatController] uploadFile called');
+    console.log('[ChatController] Upload dir:', chatUploadDir);
+    console.log('[ChatController] Dir exists:', fsSync.existsSync(chatUploadDir));
+    
     try {
       const userId = (req as AuthRequest).userId;
       if (!userId) {
+        console.log('[ChatController] Unauthorized - no userId');
         error(res, 'UNAUTHORIZED', 'Unauthorized', 401);
         return;
       }
+      console.log('[ChatController] User:', userId);
 
       upload.single('file')(req, res, (err) => {
         if (err) {
-          error(res, 'UPLOAD_ERROR', 'File upload failed', 400);
+          console.error('[ChatController] File upload error:', err);
+          console.error('[ChatController] Error code:', err.code);
+          console.error('[ChatController] Error message:', err.message);
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            error(res, 'UPLOAD_ERROR', 'File too large (max 50MB)', 400);
+          } else {
+            error(res, 'UPLOAD_ERROR', `File upload failed: ${err.message}`, 400);
+          }
           return;
         }
 
         const file = (req as any).file;
+        console.log('[ChatController] File received:', file ? file.filename : 'none');
+        
         if (!file) {
+          console.log('[ChatController] No file in request');
           error(res, 'NO_FILE', 'No file uploaded', 400);
           return;
         }
 
         const fileUrl = `/uploads/chat/${file.filename}`;
+        console.log('[ChatController] File uploaded successfully:', fileUrl);
         success(res, { fileUrl, fileName: file.originalname, fileSize: file.size, mimeType: file.mimetype });
       });
     } catch (err) {
+      console.error('[ChatController] Unexpected error:', err);
       error(res, 'INTERNAL_ERROR', 'Failed to upload file', 500);
     }
   };

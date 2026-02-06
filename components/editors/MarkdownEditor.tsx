@@ -21,6 +21,8 @@ if (typeof window !== 'undefined') {
     theme: 'default',
     securityLevel: 'loose',
     fontFamily: 'inherit',
+    // @ts-ignore - suppressErrorRendering is available in mermaid v11 but might be missing in types
+    suppressErrorRendering: true,
   });
 }
 
@@ -126,7 +128,22 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
   // 暴露方法给父组件
   useImperativeHandle(ref, () => ({
     getSelection: () => {
-      if (editorMode === 'cherry') return null;
+      if (editorMode === 'cherry') {
+        // Cherry 模式下从 window.getSelection 获取选中内容
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+        
+        const selectedText = selection.toString().trim();
+        if (!selectedText) return null;
+        
+        // Cherry 模式下无法精确计算位置，但可以返回选中的文本
+        return {
+          text: selectedText,
+          start: -1,
+          end: -1
+        };
+      }
+      
       const textarea = textareaRef.current;
       if (!textarea) return null;
       
@@ -198,6 +215,77 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  // Cherry 模式下监听选区变化
+  useEffect(() => {
+    if (editorMode !== 'cherry') return;
+
+    const handleSelectionChange = () => {
+      // 获取全局选区
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+      const cherryContainer = document.getElementById(cherryContainerId.current);
+
+      if (!cherryContainer) {
+        console.log('[MarkdownEditor] Cherry container not found, ID:', cherryContainerId.current);
+        return;
+      }
+
+      // 检查选区是否在 Cherry 编辑器内
+      if (!cherryContainer.contains(range.commonAncestorContainer)) {
+        console.log('[MarkdownEditor] Selection outside Cherry container');
+        setSelection(null);
+        onSelectionChange?.(null);
+        return;
+      }
+
+      // 获取选中的文本
+      const selectedText = selection.toString().trim();
+      console.log('[MarkdownEditor] Selection detected:', { text: selectedText, length: selectedText.length });
+
+      if (selectedText) {
+        // 计算选区在 Markdown 源文本中的位置
+        // 这是一个简化处理，对于复杂选区可能需要更精确的计算
+        const selectionInfo = {
+          text: selectedText,
+          start: -1, // Cherry 模式下无法精确计算偏移
+          end: -1
+        };
+        console.log('[MarkdownEditor] Setting selection:', selectionInfo);
+        setSelection(selectionInfo);
+        onSelectionChange?.(selectionInfo);
+      } else {
+        console.log('[MarkdownEditor] Empty selection, clearing');
+        setSelection(null);
+        onSelectionChange?.(null);
+      }
+    };
+
+    // 使用 requestAnimationFrame 优化性能，避免过于频繁调用
+    let rafId: number | null = null;
+    const debouncedHandleChange = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+      rafId = requestAnimationFrame(handleSelectionChange);
+    };
+
+    // 监听全局选区变化
+    document.addEventListener('selectionchange', debouncedHandleChange);
+    document.addEventListener('mouseup', debouncedHandleChange);
+    document.addEventListener('keyup', debouncedHandleChange);
+
+    return () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+      document.removeEventListener('selectionchange', debouncedHandleChange);
+      document.removeEventListener('mouseup', debouncedHandleChange);
+      document.removeEventListener('keyup', debouncedHandleChange);
+    };
+  }, [editorMode, cherryRef, setSelection, onSelectionChange]);
 
   useEffect(() => {
     if (!isClient || editorMode !== 'cherry') return;

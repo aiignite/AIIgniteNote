@@ -563,12 +563,14 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
 
   // 发送选中内容给AI
   const handleSendSelection = useCallback(() => {
+    console.log('[AIPanel] handleSendSelection called, current selection:', selection);
     const selectionData = getSelectionForAI();
+    console.log('[AIPanel] getSelectionForAI returned:', selectionData);
     if (!selectionData) {
       alert('请先在编辑器中选择一些内容');
       return;
     }
-    
+
     // 构建上下文信息
     let contextInfo = '';
     if (enhanceContext && activeNote) {
@@ -576,16 +578,16 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
       const typeLabel = currentNoteType === 'Markdown' ? 'Markdown笔记' :
                        currentNoteType === 'Rich Text' ? '富文本笔记' :
                        currentNoteType === 'Mind Map' ? '思维导图' : '流程图';
-      
+
       contextInfo = `【上下文】来自"${noteTitle}"(${typeLabel})中的选中内容\n\n`;
     }
-    
+
     const prompt = `${contextInfo}请帮我处理以下选中的内容：\n\n${selectionData.content}`;
     setInput(prompt);
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
-  }, [getSelectionForAI, enhanceContext, activeNote, currentNoteType]);
+  }, [getSelectionForAI, enhanceContext, activeNote, currentNoteType, selection]);
 
   // 打开导入预览弹窗
   const handleImportToEditorClick = useCallback((content: string, mode: 'replace' | 'insert' | 'append' = 'append') => {
@@ -1239,7 +1241,10 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
         let accumulatedText = '';
         let finalConversationId: string | undefined;
 
-        const controller = await api.chatAIStream(
+        const controller = new AbortController();
+        streamAbortControllerRef.current = controller;
+
+        await api.chatAIStream(
           {
             provider: selectedProvider as any,
             messages: apiMessages,
@@ -1292,10 +1297,9 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
               text: errorMessage,
               type: 'text'
             }]);
-          }
+          },
+          controller
         );
-
-        streamAbortControllerRef.current = controller;
 
         // Wait for stream to complete
         await new Promise<void>((resolve) => {
@@ -2252,21 +2256,21 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
       style={{ width: width ? `${width}px` : '320px' }}
     >
       {/* Header with Provider & Model Selection */}
-      <div className="p-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-[#15232a]">
+      <div className="p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-[#15232a]">
         {/* Assistant Selector */}
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setShowAssistantMenu(!showAssistantMenu)}
-            className="w-full flex items-center gap-2 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 p-1.5 -ml-1.5 rounded-lg transition-colors"
+            className="w-full flex items-center gap-2 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 p-1 -ml-1 rounded-lg transition-colors"
           >
-             <div className="size-6 rounded-md bg-primary/10 text-primary flex items-center justify-center">
-                <span className="material-symbols-outlined text-sm">{currentAssistant?.avatar || currentAssistant?.icon || 'smart_toy'}</span>
+             <div className="size-5 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                <span className="material-symbols-outlined text-[12px]">{currentAssistant?.avatar || currentAssistant?.icon || 'smart_toy'}</span>
              </div>
              <div className="flex flex-col items-start flex-1">
-               <span className="text-sm font-bold text-gray-900 dark:text-gray-100 leading-none">{currentAssistant?.name || '请选择助手'}</span>
+               <span className="text-[13px] font-bold text-gray-900 dark:text-gray-100 leading-none">{currentAssistant?.name || '请选择助手'}</span>
                <span className="text-[9px] text-gray-400 font-medium">{currentAssistant?.role || '—'}</span>
              </div>
-             <span className={`material-symbols-outlined text-gray-400 text-lg transition-transform duration-200 ${showAssistantMenu ? 'rotate-180' : ''}`}>expand_more</span>
+             <span className={`material-symbols-outlined text-gray-400 text-[14px] transition-transform duration-200 ${showAssistantMenu ? 'rotate-180' : ''}`}>expand_more</span>
           </button>
 
           {/* Assistant Dropdown */}
@@ -2281,18 +2285,18 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                           <button
                             key={ast.id}
                             onClick={() => handleAssistantSelect(ast)}
-                            className={`w-full text-left px-3 py-2.5 flex items-center gap-3 rounded-lg transition-colors ${
+                            className={`w-full text-left px-2.5 py-2 flex items-center gap-2.5 rounded-lg transition-colors ${
                               currentAssistant?.id === ast.id
                                 ? 'bg-primary/5 dark:bg-primary/10'
                                 : 'hover:bg-gray-50 dark:hover:bg-gray-800'
                             }`}
                           >
-                            <span className={`material-symbols-outlined text-lg ${currentAssistant?.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || ast.icon || 'smart_toy'}</span>
+                            <span className={`material-symbols-outlined text-[15px] ${currentAssistant?.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || ast.icon || 'smart_toy'}</span>
                             <div className="flex-1">
-                              <p className={`text-sm ${currentAssistant?.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
+                              <p className={`text-[13px] ${currentAssistant?.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
                               <p className="text-[9px] text-gray-400">{ast.description || ast.desc || ast.role || 'Assistant'}</p>
                             </div>
-                            {currentAssistant?.id === ast.id && <span className="material-symbols-outlined text-primary text-sm">check</span>}
+                            {currentAssistant?.id === ast.id && <span className="material-symbols-outlined text-primary text-[12px]">check</span>}
                           </button>
                       ))}
                     </>
@@ -2306,18 +2310,18 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                           <button
                             key={ast.id}
                             onClick={() => handleAssistantSelect(ast)}
-                            className={`w-full text-left px-3 py-2.5 flex items-center gap-3 rounded-lg transition-colors ${
+                            className={`w-full text-left px-2.5 py-2 flex items-center gap-2.5 rounded-lg transition-colors ${
                               currentAssistant?.id === ast.id
                                 ? 'bg-primary/5 dark:bg-primary/10'
                                 : 'hover:bg-gray-50 dark:hover:bg-gray-800'
                             }`}
                           >
-                            <span className={`material-symbols-outlined text-lg ${currentAssistant?.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || 'smart_toy'}</span>
+                            <span className={`material-symbols-outlined text-[15px] ${currentAssistant?.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || 'smart_toy'}</span>
                             <div className="flex-1">
-                              <p className={`text-sm ${currentAssistant?.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
+                              <p className={`text-[13px] ${currentAssistant?.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
                               <p className="text-[9px] text-gray-400">{ast.description || ast.role || 'Custom assistant'}</p>
                             </div>
-                            {currentAssistant?.id === ast.id && <span className="material-symbols-outlined text-primary text-sm">check</span>}
+                            {currentAssistant?.id === ast.id && <span className="material-symbols-outlined text-primary text-[12px]">check</span>}
                           </button>
                       ))}
                     </>
@@ -2358,39 +2362,39 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                 )}
 
                 {/* Action buttons for all messages */}
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 bg-white dark:bg-gray-800 rounded-full shadow-lg border border-gray-200 dark:border-gray-700 p-0.5 z-10">
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5 bg-white dark:bg-gray-800 rounded-full shadow-lg border border-gray-200 dark:border-gray-700 p-0.5 z-10">
                   {msg.role === 'user' ? (
                     <>
                       <button
                         onClick={() => handleStartEdit(index)}
-                        className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                         title="编辑消息"
                       >
-                        <span className="material-symbols-outlined text-sm text-gray-600 dark:text-gray-300">edit</span>
+                        <span className="material-symbols-outlined text-[12px] text-gray-600 dark:text-gray-300">edit</span>
                       </button>
                       <button
                         onClick={() => handleBranchFrom(index)}
-                        className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                         title="从此处分叉"
                       >
-                        <span className="material-symbols-outlined text-sm text-gray-600 dark:text-gray-300">call_split</span>
+                        <span className="material-symbols-outlined text-[12px] text-gray-600 dark:text-gray-300">call_split</span>
                       </button>
                     </>
                   ) : (
                     <>
                       <button
                         onClick={() => handleReplyTo(index)}
-                        className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                         title="回复此消息"
                       >
-                        <span className="material-symbols-outlined text-sm text-gray-600 dark:text-gray-300">reply</span>
+                        <span className="material-symbols-outlined text-[12px] text-gray-600 dark:text-gray-300">reply</span>
                       </button>
                       <button
                         onClick={() => handleBranchFrom(index - 1)}
-                        className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                         title="重新生成"
                       >
-                        <span className="material-symbols-outlined text-sm text-gray-600 dark:text-gray-300">refresh</span>
+                        <span className="material-symbols-outlined text-[12px] text-gray-600 dark:text-gray-300">refresh</span>
                       </button>
                     </>
                   )}
@@ -2398,16 +2402,16 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                     onClick={() => {
                       navigator.clipboard.writeText(msg.text);
                     }}
-                    className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                    className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                     title="复制内容"
                   >
-                    <span className="material-symbols-outlined text-sm text-gray-600 dark:text-gray-300">content_copy</span>
+                    <span className="material-symbols-outlined text-[12px] text-gray-600 dark:text-gray-300">content_copy</span>
                   </button>
                     <button
                     onClick={() => {
                       if (msg.id) toggleFavorite(index);
                     }}
-                    className={`p-1.5 rounded-full transition-colors ${
+                    className={`p-1 rounded-full transition-colors ${
                       msg.id && favoriteMessages.has(msg.id)
                         ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400'
                         : 'hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -2415,7 +2419,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                     title={msg.id && favoriteMessages.has(msg.id) ? '取消收藏' : '收藏消息'}
                     disabled={!msg.id}
                   >
-                    <span className="material-symbols-outlined text-sm">
+                    <span className="material-symbols-outlined text-[12px]">
                       {msg.id && favoriteMessages.has(msg.id) ? 'star' : 'star_border'}
                     </span>
                   </button>
@@ -2500,7 +2504,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
 
                       {/* Feedback buttons for AI messages */}
                       {msg.role === 'model' && !loading && (
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
                             onClick={() => handleFeedback(index, 'up')}
                             className={`p-0.5 rounded transition-colors ${
@@ -2510,7 +2514,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                             }`}
                             title="Good response"
                           >
-                            <span className="material-symbols-outlined text-[12px]">thumb_up</span>
+                            <span className="material-symbols-outlined text-[11px]">thumb_up</span>
                           </button>
                           <button
                             onClick={() => handleFeedback(index, 'down')}
@@ -2521,7 +2525,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                             }`}
                             title="Poor response"
                           >
-                            <span className="material-symbols-outlined text-[12px]">thumb_down</span>
+                            <span className="material-symbols-outlined text-[11px]">thumb_down</span>
                           </button>
                           {/* 导入到编辑器按钮 */}
                           {onImportToEditor && activeNote && (
@@ -2531,7 +2535,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                                 className="p-0.5 rounded transition-colors text-gray-400 hover:text-primary hover:bg-primary/10"
                                 title="导入到编辑器"
                               >
-                                <span className="material-symbols-outlined text-[12px]">download</span>
+                                <span className="material-symbols-outlined text-[11px]">download</span>
                               </button>
                               {/* 导入选项下拉菜单 */}
                               <div className="absolute bottom-full right-0 mb-1 hidden group-hover/import:block z-20">
@@ -2640,24 +2644,24 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
             <div className="flex flex-wrap gap-1.5">
               <button
                 onClick={handleSendNoteContent}
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[10px] font-medium transition-colors border border-primary/20"
+                className="size-7 flex items-center justify-center bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors border border-primary/20"
                 title="发送整个笔记内容给AI分析"
               >
-                <span className="material-symbols-outlined text-[12px]">description</span>
-                <span>发送笔记内容</span>
+                <span className="material-symbols-outlined text-[11px]">description</span>
+                <span className="sr-only">发送笔记内容</span>
               </button>
               <button
                 onClick={handleSendSelection}
                 disabled={!selection?.text}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium transition-colors border ${
+                className={`size-7 flex items-center justify-center rounded-lg transition-colors border ${
                   selection?.text
                     ? 'bg-emerald-100 dark:bg-emerald-900/30 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-400 border-gray-200 dark:border-gray-700 cursor-not-allowed'
                 }`}
-                title={selection?.text ? '发送选中内容给AI处理' : '请先在编辑器中选择内容'}
+                title={selection?.text ? `发送选中内容 (${selection.text.length})` : '请先在编辑器中选择内容'}
               >
-                <span className="material-symbols-outlined text-[12px]">select_all</span>
-                <span>发送选中内容</span>
+                <span className="material-symbols-outlined text-[11px]">select_all</span>
+                <span className="sr-only">发送选中内容</span>
               </button>
               
               {/* AI回复导入按钮 */}
@@ -2665,27 +2669,27 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                 <>
                   <button
                     onClick={() => handleImportToEditorClick(messages[messages.length - 1].text, 'append')}
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 rounded-lg text-[10px] font-medium transition-colors border border-blue-200 dark:border-blue-800"
+                    className="size-7 flex items-center justify-center bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 rounded-lg transition-colors border border-blue-200 dark:border-blue-800"
                     title="将最新AI回复追加到笔记末尾"
                   >
-                    <span className="material-symbols-outlined text-[12px]">add</span>
-                    <span>追加</span>
+                    <span className="material-symbols-outlined text-[11px]">add</span>
+                    <span className="sr-only">追加</span>
                   </button>
                   <button
                     onClick={() => handleImportToEditorClick(messages[messages.length - 1].text, 'insert')}
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-600 dark:text-purple-400 rounded-lg text-[10px] font-medium transition-colors border border-purple-200 dark:border-purple-800"
+                    className="size-7 flex items-center justify-center bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-600 dark:text-purple-400 rounded-lg transition-colors border border-purple-200 dark:border-purple-800"
                     title="将最新AI回复插入到光标位置"
                   >
-                    <span className="material-symbols-outlined text-[12px]">input</span>
-                    <span>插入</span>
+                    <span className="material-symbols-outlined text-[11px]">input</span>
+                    <span className="sr-only">插入</span>
                   </button>
                   <button
                     onClick={() => handleImportToEditorClick(messages[messages.length - 1].text, 'replace')}
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-50 dark:bg-orange-900/30 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-orange-600 dark:text-orange-400 rounded-lg text-[10px] font-medium transition-colors border border-orange-200 dark:border-orange-800"
+                    className="size-7 flex items-center justify-center bg-primary/5 dark:bg-primary/20 hover:bg-primary/10 dark:hover:bg-primary/30 text-primary dark:text-primary rounded-lg transition-colors border border-primary/20 dark:border-primary/40"
                     title="用最新AI回复替换整个笔记内容"
                   >
-                    <span className="material-symbols-outlined text-[12px]">sync_alt</span>
-                    <span>替换全部</span>
+                    <span className="material-symbols-outlined text-[11px]">sync_alt</span>
+                    <span className="sr-only">替换全部</span>
                   </button>
                 </>
               )}
@@ -2702,13 +2706,13 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                       {selection.text.length} 字符
                     </span>
                   </span>
-                  <button
-                    onClick={() => {
-                      // 清除选中
-                      useNoteAIStore.getState().setSelection('', 0, 0);
-                    }}
-                    className="text-[8px] text-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-300"
-                    title="清除选中"
+                   <button
+                     onClick={() => {
+                       // 清除选中
+                       useNoteAIStore.getState().setSelection(null);
+                     }}
+                     className="text-[8px] text-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-300"
+                     title="清除选中"
                   >
                     <span className="material-symbols-outlined text-[10px]">close</span>
                   </button>
@@ -3121,9 +3125,9 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                   <button
                     key={action.label}
                     onClick={() => handleSmartAction(action)}
-                    className="flex items-center gap-1 px-2 py-1 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-gray-200 dark:border-gray-700 rounded-md text-[10px] text-gray-600 dark:text-gray-300 transition-colors"
+                    className="flex items-center gap-0.5 px-1.5 py-0.5 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-gray-200 dark:border-gray-700 rounded-md text-[9px] text-gray-600 dark:text-gray-300 transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[10px]">{action.icon}</span>
+                    <span className="material-symbols-outlined text-[9px]">{action.icon}</span>
                     <span>{action.label}</span>
                   </button>
                 ))}
@@ -3138,7 +3142,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                   <button
                     key={idx}
                     onClick={() => insertQuickReply(reply.text)}
-                    className="text-[10px] px-2 py-1 bg-white dark:bg-gray-800 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 border border-gray-200 dark:border-gray-700 rounded-md transition-colors"
+                    className="text-[9px] px-1.5 py-0.5 bg-white dark:bg-gray-800 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 border border-gray-200 dark:border-gray-700 rounded-md transition-colors"
                   >
                     {reply.label}
                   </button>
@@ -3319,8 +3323,8 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                   onClick={() => setPreviewMode('replace')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
                     previewMode === 'replace'
-                      ? 'bg-orange-500 text-white'
-                      : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:border-orange-500'
+                      ? 'bg-primary text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:border-primary'
                   }`}
                 >
                   <span className="material-symbols-outlined text-[14px]">sync_alt</span>

@@ -18,6 +18,8 @@ export const ModelForm: React.FC<ModelFormProps> = ({ model, onSave, onClose }) 
     apiKey: model?.apiKey || '',
     popularity: model?.popularity || 50,
     isPublic: model?.isPublic ?? true,
+    supportsText: model?.supportsText ?? true,
+    supportsImage: model?.supportsImage ?? false,
     description: model?.description || '',
     speed: model?.speed || 'Fast',
     cost: model?.cost || '$',
@@ -158,8 +160,50 @@ export const ModelForm: React.FC<ModelFormProps> = ({ model, onSave, onClose }) 
                 <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
                   lock
                 </span>
-              </div>
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+              <div>
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Text Support</p>
+                <p className="text-xs text-gray-400">Process text inputs</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, supportsText: !formData.supportsText })}
+                className={`relative w-12 h-6 rounded-full transition-colors ${
+                  formData.supportsText ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                    formData.supportsText ? 'left-7' : 'left-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+              <div>
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Image Support</p>
+                <p className="text-xs text-gray-400">Process image inputs</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, supportsImage: !formData.supportsImage })}
+                className={`relative w-12 h-6 rounded-full transition-colors ${
+                  formData.supportsImage ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                    formData.supportsImage ? 'left-7' : 'left-1'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
           </div>
 
           {/* 模型特性 */}

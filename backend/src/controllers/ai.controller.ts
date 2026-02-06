@@ -15,6 +15,7 @@ const chatSchema = z.object({
     })),
     conversationId: z.string().optional(),
     attachmentIds: z.array(z.string()).optional(),
+    images: z.array(z.string()).optional(), // Base64 encoded images for vision models
     options: z.object({
       model: z.string().optional(),
       maxTokens: z.number().optional(),
@@ -35,8 +36,8 @@ export class AIController {
         return;
       }
 
-      const { provider, messages, conversationId, attachmentIds, options } = req.body;
-      const result = await aiService.chat(req.userId, provider, messages, options, conversationId, attachmentIds);
+      const { provider, messages, conversationId, attachmentIds, images, options } = req.body;
+      const result = await aiService.chat(req.userId, provider, messages, options, conversationId, attachmentIds, images);
       success(res, result);
     } catch (err) {
       if (err instanceof Error) {
@@ -316,6 +317,8 @@ export class AIController {
       }
 
       const modelData = req.body;
+      console.log('[AIController] createModel body:', JSON.stringify(modelData, null, 2));
+
       const model = await aiService.createModel(req.userId, modelData);
       success(res, model);
     } catch (err) {
@@ -345,6 +348,8 @@ export class AIController {
       }
 
       const modelData = req.body;
+      console.log(`[AIController] updateModel id=${req.params.id} body:`, JSON.stringify(modelData, null, 2));
+
       const model = await aiService.updateModel(req.userId, req.params.id as string, modelData);
       success(res, model);
     } catch (err) {
@@ -401,7 +406,7 @@ export class AIController {
         return;
       }
 
-      const { provider, messages, conversationId, attachmentIds, options } = req.body;
+      const { provider, messages, conversationId, attachmentIds, images, options } = req.body;
 
       // Set SSE headers
       res.setHeader('Content-Type', 'text/event-stream');
@@ -417,7 +422,8 @@ export class AIController {
         messages,
         options,
         conversationId,
-        attachmentIds
+        attachmentIds,
+        images
       );
 
       // Stream the response

@@ -1,5 +1,5 @@
 import { BaseAIProvider, AIProviderConfig } from './base';
-import { ChatMessage, ChatOptions, AIResponse, AIProvider } from '../../../types';
+import { ChatMessage, ChatOptions, AIResponse, AIProvider, MessageContent } from '../../../types';
 
 export class OllamaProvider extends BaseAIProvider {
   name = AIProvider.OLLAMA as any;
@@ -10,6 +10,45 @@ export class OllamaProvider extends BaseAIProvider {
     this.baseURL = config.baseURL || 'http://localhost:11434';
   }
 
+  /**
+   * Format message for Ollama API (supports multimodal with llava and other vision models)
+   * Ollama uses "images" field with base64 encoded images (without data URI prefix)
+   */
+  private formatMessageForOllama(msg: ChatMessage): any {
+    const content = msg.content;
+    
+    if (typeof content === 'string') {
+      return {
+        role: msg.role,
+        content: content,
+      };
+    }
+    
+    // Handle array of content parts (multimodal)
+    const textParts: string[] = [];
+    const images: string[] = [];
+    
+    for (const part of content) {
+      if (part.type === 'text') {
+        textParts.push(part.text);
+      } else if (part.type === 'image') {
+        // Ollama expects raw base64 data without data URI prefix
+        images.push(part.data);
+      }
+    }
+    
+    const result: any = {
+      role: msg.role,
+      content: textParts.join('\n'),
+    };
+    
+    if (images.length > 0) {
+      result.images = images;
+    }
+    
+    return result;
+  }
+
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<AIResponse> {
     const response = await fetch(`${this.baseURL}/api/chat`, {
       method: 'POST',
@@ -18,10 +57,7 @@ export class OllamaProvider extends BaseAIProvider {
       },
       body: JSON.stringify({
         model: options?.model || this.config.model || 'llama2',
-        messages: messages.map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-        })),
+        messages: messages.map((msg) => this.formatMessageForOllama(msg)),
         stream: false,
       }),
     });
@@ -64,10 +100,7 @@ export class OllamaProvider extends BaseAIProvider {
       },
       body: JSON.stringify({
         model,
-        messages: messages.map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-        })),
+        messages: messages.map((msg) => this.formatMessageForOllama(msg)),
         stream: true,
       }),
     });

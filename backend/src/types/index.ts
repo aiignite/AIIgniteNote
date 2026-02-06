@@ -93,9 +93,25 @@ export enum AIProvider {
   LMSTUDIO = 'LMSTUDIO'
 }
 
+// 图像内容类型
+export interface ImageContent {
+  type: 'image';
+  mimeType: string; // image/jpeg, image/png, etc.
+  data: string; // base64 encoded image data
+}
+
+// 文本内容类型
+export interface TextContent {
+  type: 'text';
+  text: string;
+}
+
+// 多模态内容
+export type MessageContent = string | (TextContent | ImageContent)[];
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  content: MessageContent;
 }
 
 export interface ChatOptions {

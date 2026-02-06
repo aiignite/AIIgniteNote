@@ -63,6 +63,7 @@ export const Chat: React.FC = () => {
   const [announcementDraft, setAnnouncementDraft] = useState('');
   const [pinnedMessage, setPinnedMessage] = useState<ChatMessage | null>(null);
   const [pinnedLoading, setPinnedLoading] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
   
   const { user } = useAuthStore();
   const { getTheme } = useThemeStore();
@@ -327,11 +328,45 @@ export const Chat: React.FC = () => {
           if (response.ok) {
               const result = await response.json();
               return result.data?.fileUrl || null;
+          } else {
+              // 解析错误信息
+              try {
+                  const errorResult = await response.json();
+                  console.error('Upload failed:', errorResult);
+                  throw new Error(errorResult.error?.message || '上传失败');
+              } catch {
+                  throw new Error(`上传失败 (${response.status})`);
+              }
           }
-          return null;
       } catch (e) {
           console.error('File upload failed:', e);
-          return null;
+          throw e; // 重新抛出以便调用方处理
+      }
+  };
+  
+  // 获取或创建"即时通讯文件"文件夹
+  const getOrCreateChatFolder = async (): Promise<string | undefined> => {
+      try {
+          // 获取所有文件夹
+          const foldersRes = await api.getFolders();
+          if (foldersRes.success && Array.isArray(foldersRes.data)) {
+              // 查找是否已存在"即时通讯文件"文件夹
+              const chatFolder = foldersRes.data.find((f: any) => f.name === '即时通讯文件');
+              if (chatFolder) {
+                  return chatFolder.id;
+              }
+          }
+          
+          // 如果不存在，创建新文件夹
+          const createRes = await api.createFolder({ name: '即时通讯文件' });
+          if (createRes.success && createRes.data) {
+              return createRes.data.id;
+          }
+          
+          return undefined;
+      } catch (e) {
+          console.error('Failed to get or create chat folder:', e);
+          return undefined;
       }
   };
   
@@ -343,10 +378,18 @@ export const Chat: React.FC = () => {
       }
       
       try {
+          // 获取或创建"即时通讯文件"文件夹
+          const folderId = await getOrCreateChatFolder();
+          
           // Format chat history as markdown
           const chatContent = messages.map(msg => {
               const senderName = msg.sender?.name || (msg as any).senderName || 'User';
               const time = new Date(msg.timestamp).toLocaleString('zh-CN');
+              // 处理文件消息
+              if (msg.type === 'FILE' && msg.fileUrl) {
+                  const fileLink = msg.fileUrl.startsWith('http') ? msg.fileUrl : `${FILE_BASE_URL}${msg.fileUrl}`;
+                  return `## ${senderName} (${time})\n📎 [${msg.fileName || msg.content}](${fileLink})\n`;
+              }
               return `## ${senderName} (${time})\n${msg.content}\n`;
           }).join('\n---\n\n');
           
@@ -358,11 +401,11 @@ export const Chat: React.FC = () => {
               title: noteTitle,
               noteType: 'MARKDOWN',
               content: chatContent,
-              folderId: undefined
+              folderId: folderId
           });
           
           if (res.success) {
-              alert(`✅ 已保存为笔记: ${noteTitle}`);
+              alert(`✅ 已保存为笔记: ${noteTitle}\n📁 文件夹: 即时通讯文件`);
           } else {
               alert('保存失败，请重试');
           }
@@ -396,38 +439,47 @@ export const Chat: React.FC = () => {
        if (!files || files.length === 0 || !user || !currentRoom) return;
        
        setUploadingFiles(true);
+       let successCount = 0;
        
        try {
            for (const file of Array.from(files)) {
-               const fileUrl = await handleFileUpload(file);
-               if (!fileUrl) {
-                 alert(`文件上传失败：${file.name}`);
-                 continue;
+               try {
+                   const fileUrl = await handleFileUpload(file);
+                   if (!fileUrl) {
+                     alert(`文件上传失败：${file.name}`);
+                     continue;
+                   }
+                   const fileName = file.name;
+                   const fileSize = file.size;
+                   const mimeType = file.type || undefined;
+                   
+                   const message = {
+                       id: Date.now().toString() + Math.random(),
+                       senderId: user.id,
+                       senderName: user.name || user.email || 'User',
+                     content: fileName,
+                       roomId: currentRoom.id,
+                       timestamp: new Date().toISOString(),
+                     type: 'FILE' as const,
+                       fileUrl,
+                     fileName,
+                     fileSize,
+                     mimeType
+                   };
+                   socketService.sendMessage(message);
+                   successCount++;
+               } catch (uploadErr) {
+                   console.error(`Upload failed for ${file.name}:`, uploadErr);
+                   alert(`文件上传失败：${file.name} - ${(uploadErr as Error).message}`);
                }
-               const fileName = file.name;
-               const fileSize = file.size;
-               const mimeType = file.type || undefined;
-               
-               const message = {
-                   id: Date.now().toString() + Math.random(),
-                   senderId: user.id,
-                   senderName: user.name || user.email || 'User',
-                 content: fileName,
-                   roomId: currentRoom.id,
-                   timestamp: new Date().toISOString(),
-                 type: 'FILE' as const,
-                   fileUrl,
-                 fileName,
-                 fileSize,
-                 mimeType
-               };
-               socketService.sendMessage(message);
            }
-           setShowUploadNotif(true);
-           setTimeout(() => setShowUploadNotif(false), 3000);
+           if (successCount > 0) {
+               setShowUploadNotif(true);
+               setTimeout(() => setShowUploadNotif(false), 3000);
+           }
        } catch (e) {
            console.error('File upload error:', e);
-           alert('文件上传失败，请重试');
+           alert('文件上传失败: ' + (e as Error).message);
        } finally {
            setUploadingFiles(false);
            if (fileInputRef.current) fileInputRef.current.value = '';
@@ -439,27 +491,88 @@ export const Chat: React.FC = () => {
       setShowEmojiPicker(false);
   };
   
-  const handleScreenshot = () => {
-      if (user && currentRoom) {
-          const message = {
-            id: Date.now().toString(),
-            senderId: user.id,
-            senderName: user.name || user.email || 'User',
-            content: `📸 [截图] screenshot-${Date.now()}.png`,
-            roomId: currentRoom.id,
-            timestamp: new Date().toISOString(),
-          };
-          socketService.sendMessage(message);
-          alert('✅ 截图已发送！');
+  // 处理粘贴事件（支持截图粘贴）
+  const handlePaste = async (e: React.ClipboardEvent<HTMLInputElement>) => {
+      if (!user || !currentRoom) return;
+      
+      const clipboardData = e.clipboardData;
+      if (!clipboardData) return;
+      
+      // 检查是否有图片数据
+      const items = Array.from(clipboardData.items);
+      const imageItem = items.find(item => item.type.startsWith('image/'));
+      
+      if (imageItem) {
+          e.preventDefault(); // 阻止默认粘贴行为
+          
+          const file = imageItem.getAsFile();
+          if (!file) {
+              alert('无法读取剪贴板中的图片');
+              return;
+          }
+          
+          // 生成文件名
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const extension = file.type === 'image/png' ? 'png' : 'jpg';
+          const fileName = `screenshot-${timestamp}.${extension}`;
+          
+          // 创建新的 File 对象（带有文件名）
+          const namedFile = new File([file], fileName, { type: file.type });
+          
+          setUploadingFiles(true);
+          try {
+              const fileUrl = await handleFileUpload(namedFile);
+              if (!fileUrl) {
+                  alert('截图上传失败，请重试');
+                  return;
+              }
+              
+              // 发送图片消息
+              const message = {
+                  id: Date.now().toString() + Math.random(),
+                  senderId: user.id,
+                  senderName: user.name || user.email || 'User',
+                  content: fileName,
+                  roomId: currentRoom.id,
+                  timestamp: new Date().toISOString(),
+                  type: 'IMAGE' as const,
+                  fileUrl,
+                  fileName,
+                  fileSize: namedFile.size,
+                  mimeType: namedFile.type
+              };
+              socketService.sendMessage(message);
+              
+              setShowUploadNotif(true);
+              setTimeout(() => setShowUploadNotif(false), 3000);
+          } catch (err) {
+              console.error('Screenshot paste upload error:', err);
+              alert('截图上传失败: ' + (err as Error).message);
+          } finally {
+              setUploadingFiles(false);
+          }
+      }
+  };
+  
+  const handleScreenshot = async () => {
+      if (!user || !currentRoom) return;
+      
+      try {
+          // 简化实现：提示用户使用系统截图工具，然后通过粘贴或拖拽上传
+          alert('请使用系统截图工具（macOS: Cmd+Shift+4, Windows: Win+Shift+S），截图后直接使用 Ctrl+V / Cmd+V 粘贴到输入框即可自动上传。');
+      } catch (e) {
+          console.error('Screenshot error:', e);
+          alert('截图功能暂不可用，请直接使用文件上传按钮上传截图。');
       }
   };
   
     const handleHistory = () => {
-      if (!hasMoreHistory) {
-        alert('已加载全部历史记录');
+      if (!currentRoom) {
+        alert('请先选择一个聊天室');
         return;
       }
-      loadMoreHistory();
+      // 打开历史记录查看器
+      setShowHistoryModal(true);
     };
   
   const handleMentionClick = (userId: string, userName: string) => {
@@ -1381,7 +1494,8 @@ export const Chat: React.FC = () => {
                              handleSend(e as any);
                            }
                          }}
-                         placeholder="输入消息...（@ 提及成员，Enter 发送）"
+                         onPaste={handlePaste}
+                         placeholder="输入消息...（@ 提及成员，Enter 发送，可粘贴截图）"
                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
                        />
                        
@@ -1632,7 +1746,7 @@ export const Chat: React.FC = () => {
                   </>
                 );
               })()}
-              <div>
+            </div>
             <div className="px-4 py-3 border-t flex justify-between items-center">
               <button
                 onClick={handleLeaveRoom}
@@ -1647,73 +1761,6 @@ export const Chat: React.FC = () => {
               >
                 关闭
               </button>
-            </div>
-                <div className="text-xs text-gray-600 mb-1">群聊名称</div>
-                <div className="flex gap-2">
-                  <input
-                    value={groupNameEdit}
-                    onChange={(e) => setGroupNameEdit(e.target.value)}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
-                  />
-                  <button
-                    onClick={handleUpdateGroupName}
-                    disabled={savingGroup}
-                    className="text-sm px-3 py-2 rounded-md bg-green-500 text-white disabled:opacity-50"
-                  >
-                    保存
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <div className="text-xs text-gray-600 mb-2">成员列表</div>
-                <div className="border border-gray-200 rounded-md max-h-40 overflow-y-auto">
-                  {currentRoom.members.map(member => (
-                    <div key={member.userId} className="flex items-center justify-between px-3 py-2 text-sm">
-                      <span>
-                        {member.user.name}
-                        {member.userId === user?.id ? ' (你)' : ''}
-                      </span>
-                      {member.userId !== user?.id && (
-                        <button
-                          onClick={() => handleRemoveGroupMember(member.userId)}
-                          className="text-xs text-red-500 hover:text-red-600"
-                        >
-                          移除
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="text-xs text-gray-600 mb-2">添加成员</div>
-                <div className="border border-gray-200 rounded-md max-h-40 overflow-y-auto">
-                  {chatUsers
-                    .filter(u => !currentRoom.members.some(m => m.userId === u.id) && u.id !== user?.id)
-                    .map((u) => (
-                      <label key={u.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={!!groupAddSelections[u.id]}
-                          onChange={() => setGroupAddSelections(prev => ({ ...prev, [u.id]: !prev[u.id] }))}
-                        />
-                        <span>{u.name || u.email}</span>
-                      </label>
-                    ))}
-                  {chatUsers.filter(u => !currentRoom.members.some(m => m.userId === u.id) && u.id !== user?.id).length === 0 && (
-                    <div className="text-xs text-gray-400 p-3">暂无可添加成员</div>
-                  )}
-                </div>
-                <button
-                  onClick={handleAddGroupMembers}
-                  disabled={savingGroup}
-                  className="mt-2 text-sm px-3 py-2 rounded-md bg-blue-500 text-white disabled:opacity-50"
-                >
-                  添加成员
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -1782,6 +1829,62 @@ export const Chat: React.FC = () => {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showHistoryModal && currentRoom && (
+        <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl w-[600px] max-w-[94vw] max-h-[80vh] flex flex-col">
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div className="font-semibold text-sm">聊天记录</div>
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ×
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {hasMoreHistory && (
+                <div className="flex justify-center mb-3">
+                  <button
+                    onClick={loadMoreHistory}
+                    disabled={loadingHistory}
+                    className="text-xs text-gray-600 bg-white border border-gray-200 rounded-full px-3 py-1 hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    {loadingHistory ? '加载中...' : '加载更早消息'}
+                  </button>
+                </div>
+              )}
+              {messages.map(msg => {
+                const isOwn = msg.senderId === user?.id;
+                const senderName = msg.sender?.name || (msg as any).senderName || 'User';
+                const messageTime = msg.timestamp || (msg as any).createdAt;
+                return (
+                  <div key={msg.id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[70%] ${isOwn ? 'bg-green-500 text-white' : 'bg-gray-100'} px-3 py-2 rounded-lg`}>
+                      {!isOwn && <div className="text-xs font-semibold mb-1">{senderName}</div>}
+                      <div className="text-sm whitespace-pre-wrap break-words">{msg.content}</div>
+                      <div className="text-xs mt-1 opacity-70">
+                        {messageTime ? new Date(messageTime).toLocaleString('zh-CN') : ''}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {messages.length === 0 && (
+                <div className="text-center text-gray-400 text-sm py-8">暂无消息</div>
+              )}
+            </div>
+            <div className="px-4 py-3 border-t flex justify-end">
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="text-sm px-4 py-2 rounded-md border border-gray-200 hover:bg-gray-50"
+              >
+                关闭
+              </button>
             </div>
           </div>
         </div>

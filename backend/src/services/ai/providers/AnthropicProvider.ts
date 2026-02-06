@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BaseAIProvider, AIProviderConfig } from './base';
-import { ChatMessage, ChatOptions, AIResponse, AIProvider } from '../../../types';
+import { ChatMessage, ChatOptions, AIResponse, AIProvider, MessageContent } from '../../../types';
 
 export class AnthropicProvider extends BaseAIProvider {
   name = AIProvider.ANTHROPIC as any;
@@ -19,13 +19,40 @@ export class AnthropicProvider extends BaseAIProvider {
     });
   }
 
+  /**
+   * Format content for Anthropic API (supports multimodal)
+   * Anthropic uses array with type: "text" or type: "image" with source.type: "base64"
+   */
+  private formatContentForAnthropic(content: MessageContent): any {
+    if (typeof content === 'string') {
+      return content;
+    }
+    
+    // Handle array of content parts (multimodal)
+    return content.map(part => {
+      if (part.type === 'text') {
+        return { type: 'text', text: part.text };
+      } else if (part.type === 'image') {
+        return {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: part.mimeType,
+            data: part.data
+          }
+        };
+      }
+      return { type: 'text', text: '' };
+    }).filter(p => p.type !== 'text' || p.text !== '');
+  }
+
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<AIResponse> {
     const systemMessage = messages.find((m) => m.role === 'system');
     const chatMessages = messages
       .filter((m) => m.role !== 'system')
       .map((msg) => ({
         role: msg.role as 'user' | 'assistant',
-        content: msg.content,
+        content: this.formatContentForAnthropic(msg.content),
       }));
 
     const model = options?.model || this.config.model || 'claude-3-5-sonnet-20241022';
@@ -66,7 +93,7 @@ export class AnthropicProvider extends BaseAIProvider {
       .filter((m) => m.role !== 'system')
       .map((msg) => ({
         role: msg.role as 'user' | 'assistant',
-        content: msg.content,
+        content: this.formatContentForAnthropic(msg.content),
       }));
 
     const model = options?.model || this.config.model || 'claude-3-5-sonnet-20241022';

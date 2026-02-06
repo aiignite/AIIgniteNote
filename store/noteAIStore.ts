@@ -146,7 +146,10 @@ export const useNoteAIStore = create<NoteAIState>((set, get) => ({
     }
   },
   
-  setSelection: (selection) => set({ selection }),
+  setSelection: (selection) => {
+    console.log('[NoteAIStore] setSelection called:', selection);
+    set({ selection });
+  },
   
   setEditorRef: (ref) => set({ editorRef: ref }),
   

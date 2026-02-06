@@ -367,10 +367,13 @@ class APIClient {
   ): Promise<T> {
     await this.ensureInitialized();
     const url = `${this.baseURL}${endpoint}`;
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    };
+    
+    // Only set Content-Type for non-FormData requests
+    const headers: HeadersInit = {};
+    if (!(options.body instanceof FormData)) {
+      headers['Content-Type'] = 'application/json';
+    }
+    Object.assign(headers, options.headers);
 
     if (this.accessToken) {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
@@ -1453,6 +1456,10 @@ class APIClient {
   async isAuthenticated(): Promise<boolean> {
     await this.ensureInitialized();
     return !!this.accessToken;
+  }
+
+  getBaseURL(): string {
+    return this.baseURL;
   }
 }
 

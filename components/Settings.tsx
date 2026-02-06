@@ -32,7 +32,19 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
 
   const profileName = profileForm.name || user?.name?.trim() || '';
   const profileEmail = profileForm.email || user?.email || '';
-  const profileImage = user?.image || (user?.id ? `https://picsum.photos/seed/${user.id}/200/200` : '');
+  const buildAvatarUrl = (imagePath: string | undefined): string => {
+    if (!imagePath) {
+      return user?.id ? `https://picsum.photos/seed/${user.id}/200/200` : '';
+    }
+    // If it's an uploads path, construct the full URL using API baseURL
+    if (imagePath.startsWith('/uploads/')) {
+      const baseURL = api.getBaseURL();
+      return baseURL ? `${baseURL}${imagePath}` : imagePath;
+    }
+    // If it's already a full URL, return as-is
+    return imagePath;
+  };
+  const profileImage = buildAvatarUrl(user?.image);
 
   useEffect(() => {
     setProfileForm({
@@ -548,7 +560,7 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <img
-                              src={member.user.image || `https://picsum.photos/seed/${member.user.id}/100/100`}
+                              src={buildAvatarUrl(member.user.image)}
                               className="size-9 rounded-full border border-gray-100 dark:border-gray-700"
                               alt={member.user.name || 'User'}
                             />
@@ -612,7 +624,7 @@ const Settings: React.FC<SettingsProps> = ({ initialTab = 'General', user }) => 
             <div className="flex flex-col md:flex-row gap-8 items-start">
               <div className="relative group shrink-0 mx-auto md:mx-0">
                 {profileImage ? (
-                  <img src={profileImage.startsWith('/uploads/') ? `${window.location.origin}${profileImage}` : profileImage} className="size-32 rounded-3xl object-cover border-4 border-white dark:border-gray-800 shadow-xl" alt="Profile" />
+                  <img src={profileImage} className="size-32 rounded-3xl object-cover border-4 border-white dark:border-gray-800 shadow-xl" alt="Profile" />
                 ) : (
                   <div className="size-32 rounded-3xl border-4 border-white dark:border-gray-800 shadow-xl bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center">
                     <span className="text-2xl font-bold text-primary">{(profileName || profileEmail || 'U').charAt(0).toUpperCase()}</span>

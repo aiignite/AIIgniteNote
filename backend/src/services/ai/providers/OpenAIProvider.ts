@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { BaseAIProvider, AIProviderConfig } from './base';
-import { ChatMessage, ChatOptions, AIResponse, AIProvider } from '../../../types';
+import { ChatMessage, ChatOptions, AIResponse, AIProvider, MessageContent } from '../../../types';
 
 export class OpenAIProvider extends BaseAIProvider {
   name = AIProvider.OPENAI as any;
@@ -18,12 +18,37 @@ export class OpenAIProvider extends BaseAIProvider {
     });
   }
 
+  /**
+   * 将消息内容转换为 OpenAI 格式
+   */
+  private formatContentForOpenAI(content: MessageContent): any {
+    if (typeof content === 'string') {
+      return content;
+    }
+    
+    // 多模态内容
+    return content.map(part => {
+      if (part.type === 'text') {
+        return { type: 'text', text: part.text };
+      } else if (part.type === 'image') {
+        return {
+          type: 'image_url',
+          image_url: {
+            url: `data:${part.mimeType};base64,${part.data}`,
+            detail: 'auto'
+          }
+        };
+      }
+      return part;
+    });
+  }
+
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<AIResponse> {
     const response = await this.client.chat.completions.create({
       model: options?.model || this.config.model || 'gpt-4-turbo-preview',
       messages: messages.map((msg) => ({
         role: msg.role as 'system' | 'user' | 'assistant',
-        content: msg.content,
+        content: this.formatContentForOpenAI(msg.content) as any,
       })),
       max_tokens: options?.maxTokens || 4096,
     });
@@ -54,7 +79,7 @@ export class OpenAIProvider extends BaseAIProvider {
       model,
       messages: messages.map((msg) => ({
         role: msg.role as 'system' | 'user' | 'assistant',
-        content: msg.content,
+        content: this.formatContentForOpenAI(msg.content) as any,
       })),
       stream: true,
       max_tokens: options?.maxTokens || 4096,
@@ -72,7 +97,7 @@ export class OpenAIProvider extends BaseAIProvider {
   protected formatMessages(messages: ChatMessage[]) {
     return messages.map((msg) => ({
       role: msg.role,
-      content: msg.content,
+      content: this.formatContentForOpenAI(msg.content),
     }));
   }
 

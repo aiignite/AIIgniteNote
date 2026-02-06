@@ -1,5 +1,5 @@
 import { BaseAIProvider, AIProviderConfig } from './base';
-import { ChatMessage, ChatOptions, AIResponse, AIProvider } from '../../../types';
+import { ChatMessage, ChatOptions, AIResponse, AIProvider, MessageContent } from '../../../types';
 
 export class GeminiProvider extends BaseAIProvider {
   name = AIProvider.GEMINI as any;
@@ -13,13 +13,38 @@ export class GeminiProvider extends BaseAIProvider {
     this.apiKey = config.apiKey;
   }
 
+  /**
+   * Format content for Gemini API (supports multimodal)
+   * Gemini uses "parts" array with text and inlineData for images
+   */
+  private formatPartsForGemini(content: MessageContent): any[] {
+    if (typeof content === 'string') {
+      return [{ text: content }];
+    }
+    
+    // Handle array of content parts (multimodal)
+    return content.map(part => {
+      if (part.type === 'text') {
+        return { text: part.text };
+      } else if (part.type === 'image') {
+        return {
+          inlineData: {
+            mimeType: part.mimeType,
+            data: part.data
+          }
+        };
+      }
+      return { text: '' };
+    }).filter(p => p.text !== '' || p.inlineData);
+  }
+
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<AIResponse> {
     const model = options?.model || this.config.model || 'gemini-pro';
 
-    // Format messages for Gemini API
+    // Format messages for Gemini API with multimodal support
     const contents = messages.map((msg) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }],
+      parts: this.formatPartsForGemini(msg.content),
     }));
 
     const response = await fetch(
@@ -70,10 +95,10 @@ export class GeminiProvider extends BaseAIProvider {
   async *streamChat(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<string> {
     const model = options?.model || this.config.model || 'gemini-1.5-flash';
 
-    // Format messages for Gemini API
+    // Format messages for Gemini API with multimodal support
     const contents = messages.map((msg) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }],
+      parts: this.formatPartsForGemini(msg.content),
     }));
 
     console.log('[GeminiProvider] Starting stream with model:', model);

@@ -4,6 +4,7 @@ import { ViewState } from '../types';
 import { useThemeStore } from '../store/themeStore';
 import { useLanguageStore } from '../store/languageStore';
 import { useAuthStore } from '../store/authStore';
+import { api } from '../services/api';
 
 interface SidebarProps {
   currentView: ViewState;
@@ -21,7 +22,19 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onLogout, 
 
   const displayName = user?.name?.trim() || user?.email || '用户';
   const displayEmail = user?.email || '未绑定邮箱';
-  const avatarUrl = user?.image || (user as any)?.avatarUrl || (user?.id ? `https://picsum.photos/seed/${user.id}/100/100` : '');
+  const buildAvatarUrl = (imagePath: string | undefined): string => {
+    if (!imagePath) {
+      return user?.id ? `https://picsum.photos/seed/${user.id}/100/100` : '';
+    }
+    // If it's an uploads path, construct the full URL using API baseURL
+    if (imagePath.startsWith('/uploads/')) {
+      const baseURL = api.getBaseURL();
+      return baseURL ? `${baseURL}${imagePath}` : imagePath;
+    }
+    // If it's already a full URL, return as-is
+    return imagePath;
+  };
+  const avatarUrl = buildAvatarUrl(user?.image || (user as any)?.avatarUrl);
   const initialsSource = user?.name?.trim() || user?.email || '用户';
   const initials = initialsSource ? initialsSource.charAt(0).toUpperCase() : 'U';
   const profileTitle = displayEmail && displayName !== displayEmail ? `${displayName} · ${displayEmail}` : displayName;

@@ -4,8 +4,15 @@ import { generateTokens } from '../utils/jwt';
 import { ApiErrorClass } from '../utils/response';
 import { LoginCredentials, RegisterData } from '../types';
 import { emailService } from './email.service';
+import { config } from '../config';
 
 const VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000;
+const isDev = process.env.NODE_ENV === 'development';
+
+// Check if email service is configured
+function isEmailServiceConfigured(): boolean {
+  return !!(config.emailHost && config.emailUser && config.emailPass);
+}
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -22,17 +29,6 @@ async function checkDatabaseConnection() {
   } catch (error) {
     console.warn('Database connection failed:', error);
     return false;
-  }
-}
-
-async function ensureDatabaseConnection() {
-  const isConnected = await checkDatabaseConnection();
-  if (!isConnected) {
-    throw new ApiErrorClass(
-      'DATABASE_UNAVAILABLE',
-      'Database is not configured. Please set up PostgreSQL database or use Docker.',
-      503
-    );
   }
 }
 
@@ -69,6 +65,10 @@ export class AuthService {
     // Hash password
     const hashedPassword = await hashPassword(data.password);
 
+    // Check if email verification is required
+    const emailConfigured = isEmailServiceConfigured();
+    const skipVerification = isDev || !emailConfigured;
+
     const verificationToken = generateVerificationCode();
     const verificationTokenExpires = new Date(Date.now() + VERIFICATION_CODE_TTL_MS);
 
@@ -78,9 +78,10 @@ export class AuthService {
         email: normalizedEmail,
         name: data.name,
         password: hashedPassword,
-        verificationToken,
-        verificationTokenExpires,
-        isActive: false,
+        verificationToken: skipVerification ? null : verificationToken,
+        verificationTokenExpires: skipVerification ? null : verificationTokenExpires,
+        emailVerified: skipVerification ? new Date() : null,
+        isActive: skipVerification,
         settings: {
           create: {},
         },
@@ -93,6 +94,13 @@ export class AuthService {
         createdAt: true,
       },
     });
+
+    if (skipVerification) {
+      return {
+        message: '注册成功，您现在可以登录了。',
+        user,
+      };
+    }
 
     await emailService.sendVerificationCode(user.email!, verificationToken);
 

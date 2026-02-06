@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
+import path from 'path';
 import { config, validateConfig } from './config';
 import { logger } from './utils/logger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
@@ -99,8 +100,10 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Static files for uploads
-app.use('/uploads', express.static(config.uploadDir));
+// Static files for uploads - 使用绝对路径确保正确
+const uploadsDir = path.resolve(process.cwd(), config.uploadDir);
+console.log('[App] Static uploads directory:', uploadsDir);
+app.use('/uploads', express.static(uploadsDir));
 
 // Health check endpoint
 app.get('/health', (_req, res) => {

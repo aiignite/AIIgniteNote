@@ -5,6 +5,70 @@ import { ApiErrorClass } from '../utils/response';
 import { config } from '../config';
 import { attachmentService } from './attachment.service';
 
+// 支持视觉功能的模型列表（通过模型ID匹配，不区分大小写）
+const VISION_CAPABLE_MODELS = [
+  // OpenAI
+  'gpt-4-vision',
+  'gpt-4o',
+  'gpt-4-turbo',
+  'gpt-4.1',
+  'gpt-4.5',
+  'o1',
+  'o3',
+  'o4',
+  // Google
+  'gemini-pro-vision',
+  'gemini-1.5',
+  'gemini-2',
+  'gemini-exp',
+  // Anthropic
+  'claude-3',
+  'claude-3.5',
+  'claude-4',
+  // Alibaba Qwen
+  'qwen-vl',
+  'qwen2-vl',
+  'qwen2.5-vl',
+  'qwen-max-vl',
+  'qwen-plus-vl',
+  // Local vision models
+  'llava',
+  'bakllava',
+  'cogvlm',
+  'internvl',
+  'moondream',
+  'obsidian',
+  'minicpm-v',
+  'yi-vl',
+  'deepseek-vl',
+  'pixtral',
+  // Vision suffix patterns
+  'vision',
+  '-vl',
+  '-vl-',
+];
+
+function getMessageText(content: any): string {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => p.type === 'text')
+      .map((p: any) => p.text || '')
+      .join('\n');
+  }
+  return String(content);
+}
+
+/**
+ * 检查模型是否支持视觉功能
+ */
+function isVisionCapableModel(modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  const lowerModelId = modelId.toLowerCase();
+  return VISION_CAPABLE_MODELS.some(pattern => lowerModelId.includes(pattern.toLowerCase()));
+}
+
 export class AIService {
   /**
    * Generate conversation title from first message
@@ -47,7 +111,8 @@ export class AIService {
     messages: ChatMessage[],
     options?: ChatOptions,
     conversationId?: string,
-    attachmentIds?: string[]
+    attachmentIds?: string[],
+    directImages?: string[]
   ): AsyncGenerator<any> {
     // Get user's AI settings if available
     const userSettings = await prisma.userSettings.findUnique({
@@ -147,20 +212,95 @@ export class AIService {
       });
     }
 
-    // Process attachments if provided
+    // Process attachments if provided - 支持图像处理
     let enhancedMessages = [...messages];
+    let allImages: { mimeType: string; data: string }[] = [];
+
+    // 从 attachmentIds 获取图片
     if (attachmentIds && attachmentIds.length > 0) {
       try {
-        const attachmentContent = await attachmentService.getAttachmentsContent(attachmentIds);
-        if (attachmentContent && attachmentContent.trim()) {
+        const { texts, images } = await attachmentService.getAttachmentsForAI(attachmentIds);
+
+        // 处理文本附件
+        if (texts.length > 0) {
           const attachmentSystemMessage: ChatMessage = {
             role: 'system',
-            content: `\n\n=== ATTACHED FILES CONTENT ===\n\n${attachmentContent}\n\n=== END OF ATTACHED FILES ===\n\n`
+            content: `\n\n=== ATTACHED FILES CONTENT ===\n\n${texts.join('\n\n')}\n\n=== END OF ATTACHED FILES ===\n\n`
           };
           enhancedMessages.splice(1, 0, attachmentSystemMessage);
         }
+
+        // 收集图片
+        allImages = [...allImages, ...images];
       } catch (error) {
         console.error('Failed to process attachments:', error);
+      }
+    }
+
+    // 处理直接传入的 base64 图片
+    if (directImages && directImages.length > 0) {
+      for (const base64Image of directImages) {
+        // 解析 base64 数据，提取 mimeType 和 data
+        const match = base64Image.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          allImages.push({
+            mimeType: match[1],
+            data: match[2]
+          });
+        } else {
+          // 如果没有 data URI 前缀，默认为 image/jpeg
+          allImages.push({
+            mimeType: 'image/jpeg',
+            data: base64Image
+          });
+        }
+      }
+    }
+
+    // 处理所有收集到的图片
+    if (allImages.length > 0) {
+      const currentModel = options?.model || customModel?.modelId;
+      const modelSupportsImage = typeof (customModel as any)?.supportsImage === 'boolean'
+        ? (customModel as any).supportsImage
+        : undefined;
+      const isVisionCapable = modelSupportsImage ?? isVisionCapableModel(currentModel);
+
+      // 检查模型是否支持视觉功能
+      if (!isVisionCapable) {
+        console.warn(`[chatStream] Model "${currentModel}" does not support vision. Adding image as text notice.`);
+        // 不支持视觉的模型：将图像信息添加为文本提示
+        const imageNotice: ChatMessage = {
+          role: 'system',
+          content: `\n\n[注意：用户上传了 ${allImages.length} 张图片，但当前模型 "${currentModel}" 不支持图像识别。请建议用户选择支持视觉的模型（如 Qwen2.5 VL、GPT-4V、Claude 3、Gemini 1.5 等）来处理图像内容。]\n\n`
+        };
+        enhancedMessages.splice(1, 0, imageNotice);
+      } else {
+        console.log(`[chatStream] Processing ${allImages.length} images for multimodal AI (model: ${currentModel})`);
+
+        // 找到最后一条用户消息
+        const lastUserMsgIndex = enhancedMessages.map(m => m.role).lastIndexOf('user');
+        if (lastUserMsgIndex >= 0) {
+          const lastUserMsg = enhancedMessages[lastUserMsgIndex];
+          const originalContent = typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
+
+          // 构建多模态内容
+          const multimodalContent: any[] = [
+            { type: 'text', text: originalContent }
+          ];
+
+          for (const img of allImages) {
+            multimodalContent.push({
+              type: 'image',
+              mimeType: img.mimeType,
+              data: img.data
+            });
+          }
+
+          enhancedMessages[lastUserMsgIndex] = {
+            ...lastUserMsg,
+            content: multimodalContent
+          };
+        }
       }
     }
 
@@ -169,7 +309,7 @@ export class AIService {
     let conversation: any = null;
 
     if (!conversationId) {
-      const firstUserMessage = messages.find(m => m.role === 'user')?.content || '';
+      const firstUserMessage = getMessageText(messages.find(m => m.role === 'user')?.content || '');
       const generatedTitle = await this.generateConversationTitle(firstUserMessage);
 
       conversation = await prisma.aIConversation.create({
@@ -187,11 +327,11 @@ export class AIService {
     if (messages.length > 0) {
       const lastUserMessage = messages[messages.length - 1];
       if (lastUserMessage.role === 'user' && currentConversationId) {
-        await prisma.aIMessage.create({
+          await prisma.aIMessage.create({
           data: {
             conversationId: currentConversationId,
             role: 'user',
-            content: lastUserMessage.content,
+            content: getMessageText(lastUserMessage.content),
           },
         });
       }
@@ -207,17 +347,46 @@ export class AIService {
       console.log('[chatStream] Starting to iterate over stream...');
 
       let chunkCount = 0;
-      for await (const chunk of stream) {
-        chunkCount++;
-        fullResponse += chunk;
-        console.log(`[chatStream] Chunk #${chunkCount}: "${chunk.substring(0, 30)}..." (fullResponse length: ${fullResponse.length})`);
-        yield {
-          content: chunk,
-          done: false,
-          conversationId: currentConversationId
-        };
+      try {
+        for await (const chunk of stream) {
+          chunkCount++;
+          fullResponse += chunk;
+          console.log(`[chatStream] Chunk #${chunkCount}: "${chunk.substring(0, 30)}..." (fullResponse length: ${fullResponse.length})`);
+          yield {
+            content: chunk,
+            done: false,
+            conversationId: currentConversationId
+          };
+        }
+        console.log(`[chatStream] Stream complete. Total chunks: ${chunkCount}, Full response length: ${fullResponse.length}`);
+      } catch (streamError: any) {
+        console.error('[chatStream] Stream error:', streamError);
+        try {
+          const response = await aiProvider.chat(enhancedMessages, options);
+          const fallbackText = response.content || '';
+          fullResponse = fallbackText;
+
+          const chunkSize = 10;
+          for (let i = 0; i < fallbackText.length; i += chunkSize) {
+            const chunk = fallbackText.slice(i, i + chunkSize);
+            yield {
+              content: chunk,
+              done: false,
+              conversationId: currentConversationId
+            };
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+        } catch (fallbackError: any) {
+          console.error('[chatStream] Fallback chat error:', fallbackError);
+          yield {
+            content: '',
+            done: true,
+            error: fallbackError.message || streamError.message || 'Stream interrupted',
+            conversationId: currentConversationId
+          };
+          return; // 停止生成器
+        }
       }
-      console.log(`[chatStream] Stream complete. Total chunks: ${chunkCount}, Full response length: ${fullResponse.length}`);
     } else {
       // Fallback to non-streaming with chunked output
       const response = await aiProvider.chat(enhancedMessages, options);
@@ -240,15 +409,20 @@ export class AIService {
       }
     }
 
-    // Save assistant message
+    // Save assistant message (with error handling)
     if (currentConversationId && fullResponse) {
-      await prisma.aIMessage.create({
-        data: {
-          conversationId: currentConversationId,
-          role: 'assistant',
-          content: fullResponse,
-        },
-      });
+      try {
+        await prisma.aIMessage.create({
+          data: {
+            conversationId: currentConversationId,
+            role: 'assistant',
+            content: fullResponse,
+          },
+        });
+      } catch (dbError) {
+        console.error('[chatStream] Failed to save assistant message:', dbError);
+        // 继续执行，不中断流程
+      }
     }
 
     // Send done signal with conversation ID
@@ -264,7 +438,8 @@ export class AIService {
     messages: ChatMessage[],
     options?: ChatOptions,
     conversationId?: string,
-    attachmentIds?: string[]
+    attachmentIds?: string[],
+    directImages?: string[]
   ) {
     // Get user's AI settings if available
     const userSettings = await prisma.userSettings.findUnique({
@@ -364,27 +539,85 @@ export class AIService {
 
     // Process attachments if provided
     let enhancedMessages = [...messages];
+    let allImages: { mimeType: string; data: string }[] = [];
+
     if (attachmentIds && attachmentIds.length > 0) {
       try {
-        // Get attachment content for AI context
-        const attachmentContent = await attachmentService.getAttachmentsContent(attachmentIds);
+        const { texts, images } = await attachmentService.getAttachmentsForAI(attachmentIds);
 
-        // Add attachment content as a system message if content was retrieved
-        if (attachmentContent && attachmentContent.trim()) {
+        if (texts.length > 0) {
           const attachmentSystemMessage: ChatMessage = {
             role: 'system',
-            content: `\n\n=== ATTACHED FILES CONTENT ===\n\n${attachmentContent}\n\n=== END OF ATTACHED FILES ===\n\n`
+            content: `\n\n=== ATTACHED FILES CONTENT ===\n\n${texts.join('\n\n')}\n\n=== END OF ATTACHED FILES ===\n\n`
           };
-          // Insert after the first system message (assistant context)
           enhancedMessages.splice(1, 0, attachmentSystemMessage);
         }
+
+        allImages = [...allImages, ...images];
       } catch (error) {
         console.error('Failed to process attachments:', error);
-        // Continue without attachment content if processing fails
       }
     }
 
-    // Send chat request
+    if (directImages && directImages.length > 0) {
+      for (const base64Image of directImages) {
+        const match = base64Image.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          allImages.push({
+            mimeType: match[1],
+            data: match[2]
+          });
+        } else {
+          allImages.push({
+            mimeType: 'image/jpeg',
+            data: base64Image
+          });
+        }
+      }
+    }
+
+    if (allImages.length > 0) {
+      const currentModel = options?.model || customModel?.modelId;
+      const modelSupportsImage = typeof (customModel as any)?.supportsImage === 'boolean'
+        ? (customModel as any).supportsImage
+        : undefined;
+      const isVisionCapable = modelSupportsImage ?? isVisionCapableModel(currentModel);
+
+      if (!isVisionCapable) {
+        console.warn(`[chat] Model "${currentModel}" does not support vision.`);
+        const imageNotice: ChatMessage = {
+          role: 'system',
+          content: `\n\n[注意：用户上传了 ${allImages.length} 张图片，但当前模型 "${currentModel}" 不支持图像识别。]\n\n`
+        };
+        enhancedMessages.splice(1, 0, imageNotice);
+      } else {
+        console.log(`[chat] Processing ${allImages.length} images for multimodal AI`);
+
+        const lastUserMsgIndex = enhancedMessages.map(m => m.role).lastIndexOf('user');
+        if (lastUserMsgIndex >= 0) {
+          const lastUserMsg = enhancedMessages[lastUserMsgIndex];
+          const originalContent = typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
+
+          const multimodalContent: any[] = [
+            { type: 'text', text: originalContent }
+          ];
+
+          for (const img of allImages) {
+            multimodalContent.push({
+              type: 'image',
+              mimeType: img.mimeType,
+              data: img.data
+            });
+          }
+
+          enhancedMessages[lastUserMsgIndex] = {
+            ...lastUserMsg,
+            content: multimodalContent
+          };
+        }
+      }
+    }
+
     const response = await aiProvider.chat(enhancedMessages, options);
 
     // Save conversation and messages
@@ -397,7 +630,7 @@ export class AIService {
 
     if (!conversation) {
       // Generate a meaningful title from the first user message
-      const firstUserMessage = messages.find(m => m.role === 'user')?.content || '';
+      const firstUserMessage = getMessageText(messages.find(m => m.role === 'user')?.content || '');
       const generatedTitle = await this.generateConversationTitle(firstUserMessage);
 
       conversation = await prisma.aIConversation.create({
@@ -426,7 +659,7 @@ export class AIService {
           data: {
             conversationId: conversation.id,
             role: 'user',
-            content: lastUserMessage.content,
+            content: getMessageText(lastUserMessage.content),
             tokens: response.tokens?.prompt,
           },
         });
@@ -739,6 +972,8 @@ export class AIService {
         cost: true,
         context: true,
         description: true,
+        supportsText: true,
+        supportsImage: true,
         defaultTemplateId: true,
         userId: true,
         workspaceId: true,

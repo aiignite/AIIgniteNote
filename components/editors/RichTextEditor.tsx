@@ -121,7 +121,24 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
   // 暴露方法给父组件
   useImperativeHandle(ref, () => ({
     getSelection: () => {
-      if (useBlockNote) return null;
+      if (useBlockNote) {
+        // BlockNote 模式下从 window.getSelection 获取选中内容
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+        
+        const selectedText = selection.toString().trim();
+        if (!selectedText) return null;
+        
+        // 获取选中区域的HTML内容
+        const range = selection.getRangeAt(0);
+        const clonedRange = range.cloneContents();
+        const div = document.createElement('div');
+        div.appendChild(clonedRange);
+        const html = div.innerHTML;
+        
+        return { text: selectedText, html };
+      }
+      
       const quill = quillRef.current?.getEditor?.();
       if (!quill) return null;
       
@@ -238,6 +255,51 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     applyExternalValue();
   }, [value, blockNoteEditor, useBlockNote]);
 
+  // BlockNote 选区同步（用于 AI 发送选中内容）
+  useEffect(() => {
+    if (!useBlockNote) return;
+
+    const handleSelectionChange = () => {
+      const container = blockNoteContainerRef.current;
+      if (!container) return;
+
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) {
+        setSelection(null);
+        onSelectionChange?.(null);
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      if (!container.contains(range.commonAncestorContainer)) {
+        setSelection(null);
+        onSelectionChange?.(null);
+        return;
+      }
+
+      const selectedText = selection.toString().trim();
+      if (selectedText) {
+        const selectionInfo = { text: selectedText, start: -1, end: -1 };
+        setSelection(selectionInfo);
+        onSelectionChange?.(selectionInfo);
+        return;
+      }
+
+      setSelection(null);
+      onSelectionChange?.(null);
+    };
+
+    document.addEventListener('selectionchange', handleSelectionChange);
+    document.addEventListener('mouseup', handleSelectionChange);
+    document.addEventListener('keyup', handleSelectionChange);
+
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+      document.removeEventListener('mouseup', handleSelectionChange);
+      document.removeEventListener('keyup', handleSelectionChange);
+    };
+  }, [useBlockNote, setSelection, onSelectionChange]);
+
   useEffect(() => {
     if (useBlockNote) return;
     // Robust dynamic import
@@ -277,16 +339,20 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
 
   // 监听选区变化
   const handleSelectionChange = (range: any, source: string, editor: any) => {
+    console.log('[RichTextEditor] Selection change:', { range, source });
     if (range && range.length > 0) {
       const text = editor.getText(range.index, range.length);
+      console.log('[RichTextEditor] Selected text:', text);
       const selectionInfo = {
         text,
         start: range.index,
         end: range.index + range.length
       };
+      console.log('[RichTextEditor] Setting selection:', selectionInfo);
       setSelection(selectionInfo);
       onSelectionChange?.(selectionInfo);
     } else {
+      console.log('[RichTextEditor] No selection, clearing');
       setSelection(null);
       onSelectionChange?.(null);
     }
