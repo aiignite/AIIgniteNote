@@ -1,0 +1,29 @@
+{
+  "name": "aiignitenote-mcp-server",
+  "version": "1.0.0",
+  "description": "AI Ignite Note MCP Server - 提供笔记管理的 MCP 工具接口",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "aiignitenote-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.2"
+  }
+}
