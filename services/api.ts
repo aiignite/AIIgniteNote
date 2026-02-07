@@ -979,6 +979,24 @@ class APIClient {
     });
   }
 
+  // File Manager Endpoints
+  async getFiles(params?: { source?: 'all' | 'note' | 'ai' | 'chat'; limit?: number; cursor?: string; q?: string }) {
+    const searchParams = new URLSearchParams();
+    if (params?.source) searchParams.append('source', params.source);
+    if (params?.limit) searchParams.append('limit', String(params.limit));
+    if (params?.cursor) searchParams.append('cursor', params.cursor);
+    if (params?.q) searchParams.append('q', params.q);
+
+    const query = searchParams.toString();
+    return this.request(`/api/files${query ? `?${query}` : ''}`);
+  }
+
+  async deleteFile(id: string, source: 'note' | 'ai' | 'chat') {
+    return this.request(`/api/files/${id}?source=${source}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Folders Endpoints
   async getFolders() {
     return this.request('/api/folders');
@@ -1163,14 +1181,14 @@ class APIClient {
     return this.request<{ success: true; data: any[] }>('/api/templates/system');
   }
 
-  async createTemplate(data: { name: string; description?: string; prompt: string; category?: string; icon?: string; workspaceId?: string; isPublic?: boolean }) {
+  async createTemplate(data: { name: string; description?: string; prompt: string; category?: string; icon?: string; noteType?: string; workspaceId?: string; isPublic?: boolean; defaultAssistantId?: string }) {
     return this.request<{ success: true; data: any }>('/api/templates', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async updateTemplate(id: string, data: { name?: string; description?: string; prompt?: string; category?: string; icon?: string; isPublic?: boolean; isActive?: boolean }) {
+  async updateTemplate(id: string, data: { name?: string; description?: string; prompt?: string; category?: string; icon?: string; noteType?: string; isPublic?: boolean; isActive?: boolean; defaultAssistantId?: string }) {
     return this.request<{ success: true; data: any }>(`/api/templates/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),

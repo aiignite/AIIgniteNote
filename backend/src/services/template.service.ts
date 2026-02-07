@@ -123,6 +123,7 @@ export class TemplateService {
     noteType?: string;
     workspaceId?: string;
     isPublic?: boolean;
+    defaultAssistantId?: string;
   }) {
     const template = await prisma.aITemplate.create({
       data: {
@@ -135,6 +136,7 @@ export class TemplateService {
         isPublic: data.isPublic || false,
         userId,
         workspaceId: data.workspaceId,
+        defaultAssistantId: data.defaultAssistantId,
       },
     });
 
@@ -153,6 +155,7 @@ export class TemplateService {
     noteType?: string;
     isPublic?: boolean;
     isActive?: boolean;
+    defaultAssistantId?: string;
   }) {
     // Check ownership
     const existing = await prisma.aITemplate.findFirst({
@@ -179,6 +182,7 @@ export class TemplateService {
     if (data.noteType !== undefined) updateData.noteType = data.noteType;
     if (data.isPublic !== undefined) updateData.isPublic = data.isPublic;
     if (data.isActive !== undefined) updateData.isActive = data.isActive;
+    if (data.defaultAssistantId !== undefined) updateData.defaultAssistantId = data.defaultAssistantId;
 
     const template = await prisma.aITemplate.update({
       where: { id: templateId },
@@ -243,6 +247,7 @@ export class TemplateService {
         isPublic: false, // Imported templates are private by default
         userId,
         workspaceId: data.workspaceId,
+        defaultAssistantId: data.defaultAssistantId || undefined,
       },
     });
 

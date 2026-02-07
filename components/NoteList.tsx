@@ -926,7 +926,7 @@ const NoteList: React.FC<NoteListProps> = ({ notes, folders = [], selectedNoteId
               </button>
             )}
             <h2 className="text-lg font-bold truncate max-w-[180px]">
-              {currentFolderId ? (currentFolderName || 'PLMS') : 'PLMS'}
+              {currentFolderId ? (currentFolderName || 'AI Ignite Note') : 'AI Ignite Note'}
             </h2>
           </div>
           

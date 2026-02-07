@@ -4,6 +4,7 @@ import { notesService } from '../services/notes.service';
 import { AuthRequest } from '../types';
 import { NoteType } from '../types';
 import { success, error } from '../utils/response';
+import { logger } from '../utils/logger';
 import { z } from 'zod';
 
 // Validation schemas
@@ -17,6 +18,7 @@ const createTemplateSchema = z.object({
     noteType: z.enum(['MARKDOWN', 'RICHTEXT', 'MINDMAP', 'FLOWCHART']).optional(),
     workspaceId: z.string().optional(),
     isPublic: z.boolean().optional(),
+    defaultAssistantId: z.string().optional(),
   }),
 });
 
@@ -30,6 +32,7 @@ const updateTemplateSchema = z.object({
     noteType: z.enum(['MARKDOWN', 'RICHTEXT', 'MINDMAP', 'FLOWCHART']).optional(),
     isPublic: z.boolean().optional(),
     isActive: z.boolean().optional(),
+    defaultAssistantId: z.string().optional(),
   }),
 });
 
@@ -154,8 +157,15 @@ export class TemplateController {
         error(res, 'UNAUTHORIZED', 'Authentication required', 401);
         return;
       }
-
-      const template = await templateService.create(req.userId, req.body);
+      const rawAssistantId = (req.body as any).defaultAssistantId || (req.body as any).default_assistant_id;
+      const defaultAssistantId = typeof rawAssistantId === 'string' && rawAssistantId.trim()
+        ? rawAssistantId.trim()
+        : undefined;
+      logger.debug('Template create default assistant', { userId: req.userId, defaultAssistantId });
+      const template = await templateService.create(req.userId, {
+        ...req.body,
+        defaultAssistantId,
+      });
       success(res, template);
     } catch (err) {
       if (err instanceof Error) {
@@ -184,7 +194,15 @@ export class TemplateController {
       }
 
       const templateId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const template = await templateService.update(req.userId, templateId, req.body);
+      const rawAssistantId = (req.body as any).defaultAssistantId || (req.body as any).default_assistant_id;
+      const defaultAssistantId = typeof rawAssistantId === 'string' && rawAssistantId.trim()
+        ? rawAssistantId.trim()
+        : undefined;
+      logger.debug('Template update default assistant', { userId: req.userId, templateId, defaultAssistantId });
+      const template = await templateService.update(req.userId, templateId, {
+        ...req.body,
+        defaultAssistantId,
+      });
       success(res, template);
     } catch (err) {
       if (err instanceof Error) {
@@ -259,7 +277,10 @@ export class TemplateController {
       // Increment template usage count
       await templateService.incrementUsage(template.id);
 
-      success(res, note);
+      success(res, {
+        ...note,
+        defaultAssistantId: (template as any).defaultAssistantId || null,
+      });
     } catch (err) {
       if (err instanceof Error) {
         const apiErr = err as any;

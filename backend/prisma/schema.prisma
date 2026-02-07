@@ -434,6 +434,7 @@ model AITemplate {
   isPublic    Boolean  @default(false)
   userId      String?
   workspaceId String?
+  defaultAssistantId String? @map("default_assistant_id")
   usageCount  Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -442,10 +443,12 @@ model AITemplate {
   user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   aiModels  AIModel[]    @relation("DefaultTemplate")
+  defaultAssistant AIAssistant? @relation("TemplateDefaultAssistant", fields: [defaultAssistantId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([workspaceId])
   @@index([category])
+  @@index([defaultAssistantId])
   @@map("ai_templates")
 }
 
@@ -494,6 +497,7 @@ model AIAttachment {
   // Relations
   user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  defaultForTemplates AITemplate[] @relation("TemplateDefaultAssistant")
 
   @@index([userId])
   @@index([workspaceId])

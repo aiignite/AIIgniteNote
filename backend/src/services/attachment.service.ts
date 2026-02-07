@@ -3,6 +3,7 @@ import { ApiErrorClass } from '../utils/response';
 import path from 'path';
 import fs from 'fs/promises';
 import { randomUUID } from 'crypto';
+import { config } from '../config';
 
 export interface UploadResult {
   id: string;
@@ -30,8 +31,8 @@ export class AttachmentService {
   ];
 
   constructor() {
-    // Set upload directory to backend/uploads/attachments using __dirname for correct path
-    this.uploadDir = path.resolve(__dirname, '../../uploads/attachments');
+    // 统一使用配置的上传目录
+    this.uploadDir = path.resolve(process.cwd(), config.uploadDir, 'attachments');
     console.log('[AttachmentService] Upload directory:', this.uploadDir);
     this.ensureUploadDir();
   }
@@ -170,7 +171,8 @@ export class AttachmentService {
     const attachment = await this.getAttachment(id, userId);
 
     // Delete file from disk
-    const filePath = path.join(process.cwd(), 'public', attachment.filePath);
+    const relativePath = attachment.filePath.replace(/^\/uploads\//, '');
+    const filePath = path.resolve(process.cwd(), config.uploadDir, relativePath);
     try {
       await fs.unlink(filePath);
     } catch (error) {

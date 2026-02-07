@@ -17,6 +17,7 @@ import aiAttachmentRoutes from './routes/ai-attachment.routes';
 import foldersRoutes from './routes/folders.routes';
 import tagsRoutes from './routes/tags.routes';
 import attachmentsRoutes from './routes/attachments.routes';
+import filesRoutes from './routes/files.routes';
 import searchRoutes from './routes/search.routes';
 import workspacesRoutes from './routes/workspaces.routes';
 import templateRoutes from './routes/template.routes';
@@ -129,6 +130,7 @@ app.get('/api', (_req, res) => {
         ai: '/api/ai',
         aiAssistants: '/api/ai-assistants',
         attachments: '/api/attachments',
+        files: '/api/files',
         workspaces: '/api/workspaces',
         users: '/api/users',
         templates: '/api/templates',
@@ -143,6 +145,7 @@ app.use('/api/notes', notesRoutes);
 app.use('/api/folders', foldersRoutes);
 app.use('/api/tags', tagsRoutes);
 app.use('/api/attachments', attachmentsRoutes);
+app.use('/api/files', filesRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/workspaces', workspacesRoutes);
 app.use('/api/templates', templateRoutes);

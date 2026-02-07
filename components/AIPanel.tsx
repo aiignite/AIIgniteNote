@@ -98,6 +98,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
   // Assistant Dropdown State
   const [currentAssistant, setCurrentAssistant] = useState<AIAssistantOption | null>(null);
   const [showAssistantMenu, setShowAssistantMenu] = useState(false);
+  const [pendingAssistantId, setPendingAssistantId] = useState<string | null>(null);
 
   // Conversation History State
   const [conversations, setConversations] = useState<any[]>([]);
@@ -346,6 +347,14 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
       }
     }
   }, [mergedProviders, selectedProvider, selectedModel]);
+
+  useEffect(() => {
+    if (!currentAssistant?.model || mergedProviders.length === 0) return;
+    const providerWithModel = mergedProviders.find(p => p.models.includes(currentAssistant.model!));
+    if (!providerWithModel) return;
+    setSelectedProvider(providerWithModel.id);
+    setSelectedModel(currentAssistant.model);
+  }, [currentAssistant?.model, mergedProviders]);
 
   const handleVoiceInput = () => {
     if (!recognition) {
@@ -901,10 +910,11 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
   useEffect(() => {
     if (!selectedProvider) return;
     const provider = mergedProviders.find(p => p.id === selectedProvider);
-    if (provider) {
+    if (!provider) return;
+    if (!selectedModel || !provider.models.includes(selectedModel)) {
       setSelectedModel(provider.defaultModel);
     }
-  }, [selectedProvider, mergedProviders]);
+  }, [selectedProvider, mergedProviders, selectedModel]);
 
   // Load conversation history
   useEffect(() => {
@@ -1755,7 +1765,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
     return 'attach_file';
   };
 
-  const handleAssistantSelect = async (assistant: AIAssistantOption) => {
+  const handleAssistantSelect = useCallback(async (assistant: AIAssistantOption) => {
     setCurrentAssistant(assistant);
     setShowAssistantMenu(false);
 
@@ -1775,14 +1785,50 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
         }
       }
     }
-
     setMessages(prev => [...prev,
       { role: 'model',
         text: `Switched to **${assistant.name}**. I'm ready to help with ${(assistant.role || 'general').toLowerCase()} tasks.`,
         type: 'text'
       }
     ]);
-  };
+  }, [mergedProviders]);
+
+  useEffect(() => {
+    const savedAssistantId = localStorage.getItem('template_default_assistant');
+    if (savedAssistantId) {
+      setPendingAssistantId(savedAssistantId);
+      localStorage.removeItem('template_default_assistant');
+    }
+  }, []);
+
+  // Listen for template-driven assistant switch
+  useEffect(() => {
+    const handleSwitch = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { assistantId?: string } | undefined;
+      const assistantId = detail?.assistantId;
+      if (!assistantId) return;
+
+      const match = dbAssistants.find(ast => ast.id === assistantId);
+      if (match) {
+        handleAssistantSelect(match);
+        setPendingAssistantId(null);
+      } else {
+        setPendingAssistantId(assistantId);
+      }
+    };
+
+    window.addEventListener('ai-assistant-switch', handleSwitch as EventListener);
+    return () => window.removeEventListener('ai-assistant-switch', handleSwitch as EventListener);
+  }, [dbAssistants, handleAssistantSelect]);
+
+  useEffect(() => {
+    if (!pendingAssistantId) return;
+    const match = dbAssistants.find(ast => ast.id === pendingAssistantId);
+    if (match) {
+      handleAssistantSelect(match);
+      setPendingAssistantId(null);
+    }
+  }, [dbAssistants, pendingAssistantId, handleAssistantSelect]);
 
   const handleProviderSelect = async (providerId: AIProvider) => {
     setSelectedProvider(providerId);
@@ -2223,6 +2269,9 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
   );
 
   const currentProviderData = mergedProviders.find(p => p.id === selectedProvider);
+  const currentAssistantSubtitle = currentAssistant?.model
+    ? `${currentAssistant.role || '—'} · ${currentAssistant.model}`
+    : (currentAssistant?.role || '—');
 
   // Filter and sort conversations (pinned first)
   const filteredConversations = conversations
@@ -2268,7 +2317,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
              </div>
              <div className="flex flex-col items-start flex-1">
                <span className="text-[13px] font-bold text-gray-900 dark:text-gray-100 leading-none">{currentAssistant?.name || '请选择助手'}</span>
-               <span className="text-[9px] text-gray-400 font-medium">{currentAssistant?.role || '—'}</span>
+               <span className="text-[9px] text-gray-400 font-medium">{currentAssistantSubtitle}</span>
              </div>
              <span className={`material-symbols-outlined text-gray-400 text-[14px] transition-transform duration-200 ${showAssistantMenu ? 'rotate-180' : ''}`}>expand_more</span>
           </button>
@@ -2294,7 +2343,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                             <span className={`material-symbols-outlined text-[15px] ${currentAssistant?.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || ast.icon || 'smart_toy'}</span>
                             <div className="flex-1">
                               <p className={`text-[13px] ${currentAssistant?.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
-                              <p className="text-[9px] text-gray-400">{ast.description || ast.desc || ast.role || 'Assistant'}</p>
+                              <p className="text-[9px] text-gray-400">{[ast.description || ast.desc || ast.role || 'Assistant', ast.model].filter(Boolean).join(' · ')}</p>
                             </div>
                             {currentAssistant?.id === ast.id && <span className="material-symbols-outlined text-primary text-[12px]">check</span>}
                           </button>
@@ -2319,7 +2368,7 @@ const AIPanel: React.FC<AIPanelProps> = ({ activeNote, onClose, width, editorRef
                             <span className={`material-symbols-outlined text-[15px] ${currentAssistant?.id === ast.id ? 'text-primary' : 'text-gray-400'}`}>{ast.avatar || 'smart_toy'}</span>
                             <div className="flex-1">
                               <p className={`text-[13px] ${currentAssistant?.id === ast.id ? 'font-bold text-primary' : 'text-gray-700 dark:text-gray-300'}`}>{ast.name}</p>
-                              <p className="text-[9px] text-gray-400">{ast.description || ast.role || 'Custom assistant'}</p>
+                              <p className="text-[9px] text-gray-400">{[ast.description || ast.role || 'Custom assistant', ast.model].filter(Boolean).join(' · ')}</p>
                             </div>
                             {currentAssistant?.id === ast.id && <span className="material-symbols-outlined text-primary text-[12px]">check</span>}
                           </button>

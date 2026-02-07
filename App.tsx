@@ -13,6 +13,7 @@ import Settings from './components/Settings';
 import AIDashboard from './components/AIDashboard';
 import LoginPage from './components/LoginPage';
 import { Chat } from './components/Chat';
+import FileManager from './components/FileManager';
 import { useThemeStore } from './store/themeStore';
 import { useLanguageStore } from './store/languageStore';
 import { useAuthStore } from './store/authStore';
@@ -596,6 +597,7 @@ const App: React.FC = () => {
       setTimeout(() => {
         setCurrentView('editor');
         setSelectedNoteId(noteId);
+        setAiPanelOpen(true);
         console.log('[handleTemplateApplied] Selected note ID set to:', noteId);
       }, 100);
     } catch (error) {
@@ -619,6 +621,13 @@ const App: React.FC = () => {
 
       if (response.success && response.data) {
         console.log('[handleAddNoteFromTemplate] Note created:', response.data);
+
+        if (response.data.defaultAssistantId) {
+          localStorage.setItem('template_default_assistant', response.data.defaultAssistantId);
+          window.dispatchEvent(new CustomEvent('ai-assistant-switch', {
+            detail: { assistantId: response.data.defaultAssistantId }
+          }));
+        }
         
         const newNote = apiNoteToLocalNote(response.data);
         
@@ -628,6 +637,7 @@ const App: React.FC = () => {
         // Switch to editor view and select the note
         setCurrentView('editor');
         setSelectedNoteId(newNote.id);
+        setAiPanelOpen(true);
         console.log('[handleAddNoteFromTemplate] Selected note ID set to:', newNote.id);
         
         // Cache to IndexedDB
@@ -974,6 +984,8 @@ const App: React.FC = () => {
     switch (currentView) {
       case 'ai-dashboard':
         return <AIDashboard />;
+      case 'files':
+        return <FileManager />;
       case 'templates':
         return <TemplateGallery onTemplateApplied={handleTemplateApplied} />;
       case 'settings':
@@ -1073,7 +1085,7 @@ const App: React.FC = () => {
       <div className="flex-1 flex overflow-hidden h-full">
         {renderContent()}
 
-        {isAuthenticated && <Chat />}
+        {isAuthenticated && currentView !== 'files' && <Chat />}
 
         {currentView === 'editor' && aiPanelOpen && (
           <>

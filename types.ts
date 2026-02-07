@@ -17,6 +17,7 @@ export interface AITemplate {
   isPublic: boolean;
   userId?: string;
   workspaceId?: string;
+  defaultAssistantId?: string;
   usageCount: number;
   createdAt: string;
   updatedAt: string;
@@ -31,6 +32,7 @@ export interface CreateTemplateRequest {
   noteType?: TemplateNoteType;
   workspaceId?: string;
   isPublic?: boolean;
+  defaultAssistantId?: string;
 }
 
 export interface UpdateTemplateRequest {
@@ -42,6 +44,7 @@ export interface UpdateTemplateRequest {
   noteType?: TemplateNoteType;
   isPublic?: boolean;
   isActive?: boolean;
+  defaultAssistantId?: string;
 }
 
 export interface ApplyTemplateRequest {
@@ -121,4 +124,23 @@ export interface AISettings {
   };
 }
 
-export type ViewState = 'editor' | 'templates' | 'settings' | 'favorites' | 'tags' | 'trash' | 'ai-dashboard';
+export type ViewState = 'editor' | 'templates' | 'settings' | 'favorites' | 'tags' | 'trash' | 'ai-dashboard' | 'files';
+
+export type FileSource = 'note' | 'ai' | 'chat';
+
+export interface FileListItem {
+  id: string;
+  source: FileSource;
+  fileName: string;
+  storedName?: string;
+  fileSize?: number | null;
+  mimeType?: string | null;
+  fileUrl?: string | null;
+  createdAt: string;
+  noteId?: string | null;
+  noteTitle?: string | null;
+  roomId?: string | null;
+  roomName?: string | null;
+  senderId?: string | null;
+  senderName?: string | null;
+}
