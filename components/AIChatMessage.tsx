@@ -114,7 +114,9 @@ const CodeBlock = memo(({ language, children }: { language?: string; children: s
     }
   }, [children, language]);
 
-  const isRunnable = language === 'javascript' || language === 'js';
+  // 代码运行功能已禁用 - new Function() 存在安全风险
+  // 如需启用，应使用 Web Worker 沙箱而非直接执行
+  const isRunnable = false;
 
   return (
     <div className="relative group my-4">

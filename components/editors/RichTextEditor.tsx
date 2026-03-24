@@ -23,13 +23,7 @@ import {
 import { api } from '../../services/api';
 import { useNoteAIStore } from '../../store/noteAIStore';
 
-// We'll import these dynamically to avoid SSR issues and ensure correct registration
-let Quill: any = null;
-
-// Set KaTeX to window for Quill formula support
-if (typeof window !== 'undefined') {
-  (window as any).katex = katex;
-}
+// BlockNote editor - Quill has been removed
 
 interface RichTextEditorProps {
   value: string;
@@ -48,11 +42,9 @@ export interface RichTextEditorRef {
 
 const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props, ref) => {
   const { value, onChange, onSelectionChange } = props;
-  const [QuillComponent, setQuillComponent] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [internalValue, setInternalValue] = useState(value);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const quillRef = useRef<any>(null);
   const blockNoteContainerRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -68,9 +60,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     const { default: jsPDF } = await import('jspdf');
     const { default: html2canvas } = await import('html2canvas');
 
-    const element = useBlockNote
-      ? (blockNoteContainerRef.current?.querySelector('.bn-editor') as HTMLElement | null)
-      : quillRef.current?.getEditor?.()?.root;
+    const element = blockNoteContainerRef.current?.querySelector('.bn-editor') as HTMLElement | null;
     if (!element) return;
     const canvas = await html2canvas(element, {
       scale: 2,
@@ -138,17 +128,6 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
         
         return { text: selectedText, html };
       }
-      
-      const quill = quillRef.current?.getEditor?.();
-      if (!quill) return null;
-      
-      const range = quill.getSelection();
-      if (!range || range.length === 0) return null;
-      
-      const text = quill.getText(range.index, range.length);
-      const html = quill.root.innerHTML;
-      
-      return { text, html };
     },
     insertContent: async (content: string, position: 'cursor' | 'end' | 'replace' = 'cursor') => {
       if (useBlockNote) {
@@ -170,39 +149,6 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
         pushHistory(nextHtml, 'ai-import');
         return;
       }
-      const quill = quillRef.current?.getEditor?.();
-      if (!quill) {
-        // 如果Quill还没加载，直接操作内部值
-        let newValue = internalValue;
-        if (position === 'end') {
-          newValue = internalValue + content;
-        } else {
-          newValue = content + internalValue;
-        }
-        setInternalValue(newValue);
-        onChange(newValue);
-        pushHistory(newValue, 'ai-import');
-        return;
-      }
-      
-      if (position === 'end') {
-        const length = quill.getLength();
-        quill.insertText(length - 1, '\n\n' + content);
-      } else if (position === 'replace') {
-        const range = quill.getSelection();
-        if (range) {
-          quill.deleteText(range.index, range.length);
-          quill.insertText(range.index, content);
-        }
-      } else {
-        const range = quill.getSelection() || { index: 0 };
-        quill.insertText(range.index, content);
-      }
-      
-      const newValue = quill.root.innerHTML;
-      setInternalValue(newValue);
-      onChange(newValue);
-      pushHistory(newValue, 'ai-import');
     },
     replaceContent: async (content: string) => {
       if (useBlockNote) {
@@ -215,14 +161,6 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
         pushHistory(content, 'ai-import');
         return;
       }
-      const quill = quillRef.current?.getEditor?.();
-      if (quill) {
-        quill.setContents([]);
-        quill.clipboard.dangerouslyPasteHTML(0, content);
-      }
-      setInternalValue(content);
-      onChange(content);
-      pushHistory(content, 'ai-import');
     },
     getContent: () => internalValue,
     exportAsPDF: async (title: string) => {
@@ -300,115 +238,12 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     };
   }, [useBlockNote, setSelection, onSelectionChange]);
 
-  useEffect(() => {
-    if (useBlockNote) return;
-    // Robust dynamic import
-    const initQuill = async () => {
-      try {
-        const ReactQuillMod = await import('react-quill');
-        const ImageResizeMod = await import('quill-image-resize-module-react');
-        
-        // Import Quill CSS styles
-        await import('react-quill/dist/quill.snow.css');
 
-        Quill = ReactQuillMod.Quill;
-        (window as any).Quill = Quill;
-
-        // Register Image Resize
-        try {
-          Quill.register('modules/imageResize', ImageResizeMod.default);
-        } catch (e) {
-          console.warn("ImageResize registration failed", e);
-        }
-
-        const Component = ReactQuillMod.default || ReactQuillMod;
-        setQuillComponent(() => Component);
-      } catch (err) {
-        console.error("Failed to load react-quill and plugins", err);
-        setError("Failed to load Rich Text Editor.");
-      }
-    };
-    
-    initQuill();
-  }, [useBlockNote]);
 
   // Sync internal value when prop changes
   useEffect(() => {
     setInternalValue(value);
   }, [value]);
-
-  // 监听选区变化
-  const handleSelectionChange = (range: any, source: string, editor: any) => {
-    console.log('[RichTextEditor] Selection change:', { range, source });
-    if (range && range.length > 0) {
-      const text = editor.getText(range.index, range.length);
-      console.log('[RichTextEditor] Selected text:', text);
-      const selectionInfo = {
-        text,
-        start: range.index,
-        end: range.index + range.length
-      };
-      console.log('[RichTextEditor] Setting selection:', selectionInfo);
-      setSelection(selectionInfo);
-      onSelectionChange?.(selectionInfo);
-    } else {
-      console.log('[RichTextEditor] No selection, clearing');
-      setSelection(null);
-      onSelectionChange?.(null);
-    }
-  };
-
-  const modules = React.useMemo(() => {
-    return {
-      toolbar: {
-        container: [
-          [{ 'font': [] }, { 'size': [] }],
-          ['bold', 'italic', 'underline', 'strike'],
-          [{ 'color': [] }, { 'background': [] }],
-          [{ 'script': 'super' }, { 'script': 'sub' }],
-          [{ 'header': '1' }, { 'header': '2' }, 'blockquote', 'code-block'],
-          [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'indent': '-1' }, { 'indent': '+1' }],
-          [{ 'direction': 'rtl' }, { 'align': [] }],
-          ['link', 'image', 'video', 'formula'],
-          ['pdf'],
-          ['clean']
-        ],
-        handlers: {
-          pdf: function() {
-            exportPdf('note');
-          }
-        }
-      },
-      imageResize: {
-        modules: ['Resize', 'DisplaySize', 'Toolbar']
-      }
-    };
-  }, [exportPdf]);
-
-  const formats = [
-    'font', 'size',
-    'bold', 'italic', 'underline', 'strike',
-    'color', 'background',
-    'script', 'header', 'blockquote', 'code-block',
-    'list', 'bullet', 'indent',
-    'direction', 'align',
-    'link', 'image', 'video', 'formula'
-  ];
-
-  // Handle Quill onChange with validation
-  const handleChange = (val?: string) => {
-    const newValue = val || '';
-    const isEmptyContent = newValue === '' || newValue === '<p><br></p>' || newValue === '<p></p>';
-    
-    setInternalValue(newValue);
-
-    // Only trigger onChange if content actually changed and is not empty
-    if (newValue !== internalValue) {
-      if (!isEmptyContent || newValue.length > 11) { // 11 = '<p><br></p>'.length
-        onChange(newValue);
-      }
-    }
-  };
 
   if (error) {
     return (
@@ -418,20 +253,9 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     );
   }
 
-  if (!useBlockNote && !QuillComponent) {
-    return (
-      <div className="h-full w-full flex items-center justify-center bg-transparent">
-        <div className="flex flex-col items-center gap-3">
-           <span className="size-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-           <span className="text-xs text-gray-500">Loading Editor...</span>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="h-full w-full flex flex-col bg-transparent rich-text-editor-container">
-      {useBlockNote ? (
+      {useBlockNote && (
         <div
           ref={blockNoteContainerRef}
           className="h-full w-full flex flex-col"
@@ -800,34 +624,7 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
             </div>
           </BlockNoteView>
         </div>
-      ) : (
-        <QuillComponent
-          ref={quillRef}
-          theme="snow"
-          value={internalValue}
-          onChange={handleChange}
-          onChangeSelection={handleSelectionChange}
-          modules={modules}
-          formats={formats}
-          className="h-full flex flex-col"
-          placeholder="Start writing rich text..."
-        />
       )}
-      <style>{`
-        .rich-text-editor-container .ql-container {
-          font-family: 'Inter', -apple-system, system-ui, sans-serif;
-          font-size: 16px;
-        }
-        .rich-text-editor-container .ql-editor {
-          min-height: 100%;
-          line-height: 1.6;
-        }
-        .rich-text-editor-container .ql-pdf::after {
-          content: "PDF";
-          font-size: 12px;
-          font-weight: 600;
-        }
-      `}</style>
     </div>
   );
 });

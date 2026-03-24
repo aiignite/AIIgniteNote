@@ -10,7 +10,7 @@ import Editor from './components/Editor';
 import AIPanel from './components/AIPanel';
 import TemplateGallery from './components/TemplateGallery';
 import Settings from './components/Settings';
-import AIDashboard from './components/AIDashboard';
+import AIDashboard, { AIDashboardRefactored } from './components/AIDashboard/index';
 import LoginPage from './components/LoginPage';
 import { Chat } from './components/Chat';
 import FileManager from './components/FileManager';
@@ -983,7 +983,7 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (currentView) {
       case 'ai-dashboard':
-        return <AIDashboard />;
+        return <AIDashboardRefactored />;
       case 'files':
         return <FileManager />;
       case 'templates':
