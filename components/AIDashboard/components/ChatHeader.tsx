@@ -120,11 +120,11 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     <div className={`flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 ${className}`}>
       {/* 左侧：侧边栏切换 + 标题 */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
-        {/* 侧边栏切换按钮 */}
+        {/* 侧边栏切换按钮 - 移动端隐藏 */}
         {onToggleSidebar && (
           <button
             onClick={onToggleSidebar}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+            className="hidden md:flex p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
             title={showSidebar ? '隐藏侧边栏' : '显示侧边栏'}
           >
             <span className="material-symbols-outlined">

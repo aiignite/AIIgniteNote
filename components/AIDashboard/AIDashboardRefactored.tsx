@@ -43,6 +43,7 @@ import {
 // 外部依赖
 import { ModelForm } from '../ModelForm';
 import { AssistantForm } from '../AssistantForm';
+import MobileDrawer from '../MobileDrawer';
 
 /**
  * 重构版 AI 仪表盘
@@ -58,6 +59,18 @@ export const AIDashboardRefactored: React.FC = () => {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showModelForm, setShowModelForm] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
+
+  // ==================== 移动端状态 ====================
+  const [isMobile, setIsMobile] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // 移动端检测
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
   const [showAssistantForm, setShowAssistantForm] = useState(false);
   const [editingAssistant, setEditingAssistant] = useState<AIAssistant | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -251,104 +264,144 @@ export const AIDashboardRefactored: React.FC = () => {
   const selectedIndices = Array.from(selectedMessages);
 
   // ==================== 渲染 ====================
-  return (
-    <div className="flex h-full bg-gray-50 dark:bg-gray-900">
-      {/* 侧边栏 */}
-      <div className={`${sidebarCollapsed ? 'w-0' : 'w-80'} transition-all duration-300 overflow-hidden border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800`}>
-        <div className="h-full flex flex-col">
-          {/* 侧边栏头部 */}
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <button
-              onClick={handleNewChat}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
-            >
-              <span className="material-symbols-outlined text-lg">add</span>
-              新对话
-            </button>
-          </div>
-
-          {/* Tab 切换 */}
-          <div className="flex border-b border-gray-200 dark:border-gray-700">
-            {(['Chat', 'Models', 'Assistants'] as DashboardTab[]).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                  activeTab === tab
-                    ? 'text-primary border-b-2 border-primary bg-primary/5'
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-              >
-                {tab === 'Chat' ? '对话' : tab === 'Models' ? '模型' : '助手'}
-              </button>
-            ))}
-          </div>
-
-          {/* Tab 内容 */}
-          <div className="flex-1 overflow-hidden">
-            {activeTab === 'Chat' && (
-              <ConversationList
-                conversations={filteredConversations as AIConversation[]}
-                currentConversationId={currentConversationId}
-                onSelectConversation={setCurrentConversationId}
-                onDeleteConversation={deleteConversation}
-                onNewConversation={handleNewChat}
-                searchQuery={searchQuery}
-                onSearchChange={setSearchQuery}
-                sortMode={sortBy}
-                onSortChange={setSortBy}
-              />
-            )}
-
-            {activeTab === 'Models' && (
-              <div className="p-4 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-gray-900 dark:text-white">AI 模型</h3>
-                  <button
-                    onClick={() => {
-                      setEditingModel(null);
-                      setShowModelForm(true);
-                    }}
-                    className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-                  >
-                    <span className="material-symbols-outlined text-sm">add</span>
-                  </button>
-                </div>
-                <ModelSelector
-                  models={models}
-                  currentModelId={currentModelId}
-                  onSelectModel={selectModel}
-                />
-              </div>
-            )}
-
-            {activeTab === 'Assistants' && (
-              <div className="p-4 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-gray-900 dark:text-white">AI 助手</h3>
-                  <button
-                    onClick={() => {
-                      setEditingAssistant(null);
-                      setShowAssistantForm(true);
-                    }}
-                    className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-                  >
-                    <span className="material-symbols-outlined text-sm">add</span>
-                  </button>
-                </div>
-                <AssistantSelector
-                  assistants={assistants}
-                  currentAssistantId={currentAssistantId}
-                  onSelectAssistant={handleSelectAssistant}
-                />
-              </div>
-            )}
-          </div>
-        </div>
+  // 侧边栏内容（桌面端直接渲染，移动端放入抽屉）
+  const renderSidebarContent = () => (
+    <div className="h-full flex flex-col">
+      {/* 侧边栏头部 */}
+      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+        <button
+          onClick={handleNewChat}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors min-h-[44px]"
+        >
+          <span className="material-symbols-outlined text-lg">add</span>
+          新对话
+        </button>
       </div>
 
+      {/* Tab 切换 */}
+      <div className="flex border-b border-gray-200 dark:border-gray-700">
+        {(['Chat', 'Models', 'Assistants'] as DashboardTab[]).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`flex-1 py-2.5 text-sm font-medium transition-colors min-h-[44px] ${
+              activeTab === tab
+                ? 'text-primary border-b-2 border-primary bg-primary/5'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+            }`}
+          >
+            {tab === 'Chat' ? '对话' : tab === 'Models' ? '模型' : '助手'}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab 内容 */}
+      <div className="flex-1 overflow-hidden">
+        {activeTab === 'Chat' && (
+          <ConversationList
+            conversations={filteredConversations as AIConversation[]}
+            currentConversationId={currentConversationId}
+            onSelectConversation={(id) => {
+              setCurrentConversationId(id);
+              if (isMobile) setSidebarOpen(false);
+            }}
+            onDeleteConversation={deleteConversation}
+            onNewConversation={handleNewChat}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            sortMode={sortBy}
+            onSortChange={setSortBy}
+          />
+        )}
+
+        {activeTab === 'Models' && (
+          <div className="p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium text-gray-900 dark:text-white">AI 模型</h3>
+              <button
+                onClick={() => {
+                  setEditingModel(null);
+                  setShowModelForm(true);
+                }}
+                className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"
+              >
+                <span className="material-symbols-outlined text-sm">add</span>
+              </button>
+            </div>
+            <ModelSelector
+              models={models}
+              currentModelId={currentModelId}
+              onSelectModel={selectModel}
+            />
+          </div>
+        )}
+
+        {activeTab === 'Assistants' && (
+          <div className="p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium text-gray-900 dark:text-white">AI 助手</h3>
+              <button
+                onClick={() => {
+                  setEditingAssistant(null);
+                  setShowAssistantForm(true);
+                }}
+                className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"
+              >
+                <span className="material-symbols-outlined text-sm">add</span>
+              </button>
+            </div>
+            <AssistantSelector
+              assistants={assistants}
+              currentAssistantId={currentAssistantId}
+              onSelectAssistant={handleSelectAssistant}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-full bg-gray-50 dark:bg-gray-900">
+      {/* 移动端：侧边栏作为抽屉 */}
+      {isMobile && (
+        <MobileDrawer
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          title="AI Dashboard"
+        >
+          {renderSidebarContent()}
+        </MobileDrawer>
+      )}
+
+      {/* 移动端顶部栏 */}
+      {isMobile && (
+        <div className="fixed top-0 left-0 right-0 z-20 h-14 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-3">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+          >
+            <span className="material-symbols-outlined">menu</span>
+          </button>
+          <span className="font-semibold text-sm truncate flex-1">AI Dashboard</span>
+          <button
+            onClick={handleNewChat}
+            className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-primary text-white hover:bg-primary/90"
+          >
+            <span className="material-symbols-outlined">add</span>
+          </button>
+        </div>
+      )}
+
+      {/* 桌面端侧边栏 */}
+      {!isMobile && (
+        <div className={`${sidebarCollapsed ? 'w-0' : 'w-80'} transition-all duration-300 overflow-hidden border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800`}>
+          {renderSidebarContent()}
+        </div>
+      )}
+
       {/* 主聊天区域 */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={`flex-1 flex flex-col min-w-0 ${isMobile ? 'pt-14' : ''}`}>
         {/* 聊天头部 */}
         <ChatHeader
           conversation={currentConversation as unknown as AIConversation}

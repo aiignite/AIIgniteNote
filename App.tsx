@@ -14,6 +14,8 @@ import AIDashboard, { AIDashboardRefactored } from './components/AIDashboard/ind
 import LoginPage from './components/LoginPage';
 import { Chat } from './components/Chat';
 import FileManager from './components/FileManager';
+import MobileDrawer from './components/MobileDrawer';
+import MobileBottomSheet from './components/MobileBottomSheet';
 import { useThemeStore } from './store/themeStore';
 import { useLanguageStore } from './store/languageStore';
 import { useAuthStore } from './store/authStore';
@@ -135,6 +137,23 @@ const App: React.FC = () => {
   const [rightPanelWidth, setRightPanelWidth] = useState(360);
   const [isDraggingLeft, setIsDraggingLeft] = useState(false);
   const [isDraggingRight, setIsDraggingRight] = useState(false);
+
+  // Mobile State
+  const [isMobile, setIsMobile] = useState(false);
+  const [isTablet, setIsTablet] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [aiPanelMobileOpen, setAiPanelMobileOpen] = useState(false);
+
+  // Mobile detection
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+      setIsTablet(window.innerWidth >= 768 && window.innerWidth < 1024);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Sync status
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
@@ -916,7 +935,7 @@ const App: React.FC = () => {
     console.log('CSS variable --theme-primary set to:', getComputedStyle(root).getPropertyValue('--theme-primary'));
   }, [primaryColor, getTheme]);
 
-  // Handle Resizing Logic
+  // Handle Resizing Logic (Mouse + Touch)
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isDraggingLeft) {
@@ -933,7 +952,29 @@ const App: React.FC = () => {
       }
     };
 
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!isDraggingLeft && !isDraggingRight) return;
+      const touch = e.touches[0];
+      if (isDraggingLeft) {
+        const newWidth = touch.clientX - 64;
+        if (newWidth >= 250 && newWidth <= 600) {
+          setLeftPanelWidth(newWidth);
+        }
+      }
+      if (isDraggingRight) {
+        const newWidth = window.innerWidth - touch.clientX;
+        if (newWidth >= 300 && newWidth <= 800) {
+          setRightPanelWidth(newWidth);
+        }
+      }
+    };
+
     const handleMouseUp = () => {
+      setIsDraggingLeft(false);
+      setIsDraggingRight(false);
+    };
+
+    const handleTouchEnd = () => {
       setIsDraggingLeft(false);
       setIsDraggingRight(false);
     };
@@ -941,6 +982,8 @@ const App: React.FC = () => {
     if (isDraggingLeft || isDraggingRight) {
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener('touchmove', handleTouchMove, { passive: false });
+      document.addEventListener('touchend', handleTouchEnd);
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
     }
@@ -948,6 +991,8 @@ const App: React.FC = () => {
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
       document.body.style.cursor = 'default';
       document.body.style.userSelect = 'auto';
     };
@@ -1011,7 +1056,7 @@ const App: React.FC = () => {
               onDeleteNote={handleDeleteNote}
               onUpdateNote={handleUpdateNote}
               onToggleFavorite={handleToggleFavorite}
-              width={leftPanelWidth}
+              width={isMobile ? '100%' : leftPanelWidth}
               loading={notesLoading}
               error={notesError}
               templates={templates}
@@ -1022,19 +1067,24 @@ const App: React.FC = () => {
                 await loadNotes(currentView === 'trash');
               }}
             />
-            {/* Left Resizer */}
-            <div
-              className={`w-1 cursor-col-resize hover:bg-primary transition-colors flex-shrink-0 z-20 ${isDraggingLeft ? 'bg-primary' : 'bg-transparent'}`}
-              onMouseDown={() => setIsDraggingLeft(true)}
-              title="Drag to resize list"
-            />
-            <Editor 
-              note={activeNote} 
-              onUpdateNote={handleUpdateNote} 
-              aiPanelOpen={aiPanelOpen}
-              onToggleAiPanel={() => setAiPanelOpen(!aiPanelOpen)}
-              onEditorRefChange={(ref) => { editorRef.current = ref?.current; }}
-            />
+            {/* Left Resizer - hidden on mobile/tablet */}
+            {!isMobile && !isTablet && (
+              <div
+                className={`w-1 cursor-col-resize hover:bg-primary transition-colors flex-shrink-0 z-20 ${isDraggingLeft ? 'bg-primary' : 'bg-transparent'}`}
+                onMouseDown={() => setIsDraggingLeft(true)}
+                title="Drag to resize list"
+              />
+            )}
+            {/* Editor - hidden on mobile (rendered separately) */}
+            {!isMobile && (
+              <Editor 
+                note={activeNote} 
+                onUpdateNote={handleUpdateNote} 
+                aiPanelOpen={aiPanelOpen}
+                onToggleAiPanel={() => setAiPanelOpen(!aiPanelOpen)}
+                onEditorRefChange={(ref) => { editorRef.current = ref?.current; }}
+              />
+            )}
           </div>
         );
     }
@@ -1076,41 +1126,138 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full bg-background-light dark:bg-background-dark overflow-hidden">
-      <Sidebar
-        currentView={currentView}
-        onViewChange={setCurrentView}
-        onLogout={handleLogout}
-      />
+      {/* Mobile: Sidebar as drawer */}
+      {isMobile ? (
+        <MobileDrawer
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          title="Menu"
+        >
+          <div className="flex flex-col h-full">
+            <Sidebar
+              currentView={currentView}
+              onViewChange={(view) => {
+                setCurrentView(view);
+                setSidebarOpen(false);
+              }}
+              onLogout={handleLogout}
+            />
+          </div>
+        </MobileDrawer>
+      ) : (
+        <Sidebar
+          currentView={currentView}
+          onViewChange={setCurrentView}
+          onLogout={handleLogout}
+        />
+      )}
+
+      {/* Mobile Header with hamburger */}
+      {isMobile && (
+        <div className="fixed top-0 left-0 right-0 z-30 h-14 bg-white dark:bg-[#15232a] border-b border-gray-200 dark:border-gray-800 flex items-center px-4 gap-3">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            <span className="material-symbols-outlined">menu</span>
+          </button>
+          <span className="font-semibold text-sm truncate">
+            {currentView === 'editor' && activeNote?.title}
+            {currentView === 'ai-dashboard' && 'AI Dashboard'}
+            {currentView === 'templates' && 'Templates'}
+            {currentView === 'files' && 'Files'}
+            {currentView === 'settings' && 'Settings'}
+            {currentView === 'trash' && 'Trash'}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            {currentView === 'editor' && (
+              <button
+                onClick={() => setAiPanelMobileOpen(true)}
+                className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-primary text-white hover:bg-primary/90"
+                title="Open AI Panel"
+              >
+                <span className="material-symbols-outlined">auto_awesome</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 flex overflow-hidden h-full">
-        {renderContent()}
-
-        {isAuthenticated && currentView !== 'files' && <Chat />}
-
-        {currentView === 'editor' && aiPanelOpen && (
+        {isMobile ? (
+          // Mobile: Editor only, sidebar and AIPanel as drawers
+          <div className="flex-1 flex flex-col overflow-hidden pt-14">
+            {currentView === 'editor' ? (
+              <Editor 
+                note={activeNote} 
+                onUpdateNote={handleUpdateNote} 
+                aiPanelOpen={aiPanelOpen}
+                onToggleAiPanel={() => setAiPanelMobileOpen(true)}
+                onEditorRefChange={(ref) => { editorRef.current = ref?.current; }}
+              />
+            ) : (
+              renderContent()
+            )}
+          </div>
+        ) : (
+          // Tablet/Desktop
           <>
-            {/* Right Resizer */}
-            <div
-              className={`w-1 cursor-col-resize hover:bg-primary transition-colors flex-shrink-0 z-20 ${isDraggingRight ? 'bg-primary' : 'bg-gray-200 dark:bg-gray-800'}`}
-              onMouseDown={() => setIsDraggingRight(true)}
-              title="Drag to resize AI Panel"
-            />
-            <AIPanel
-              activeNote={activeNote}
-              onClose={() => setAiPanelOpen(false)}
-              width={rightPanelWidth}
-              editorRef={editorRef}
-              onImportToEditor={(content, mode) => {
-                // 直接调用编辑器的导入方法
-                if (editorRef.current) {
-                  if (mode === 'replace' && editorRef.current.replaceContent) {
-                    editorRef.current.replaceContent(content);
-                  } else if (editorRef.current.insertContent) {
-                    editorRef.current.insertContent(content, mode === 'append' ? 'end' : 'cursor');
-                  }
-                }
-              }}
-            />
+            {renderContent()}
+
+            {isAuthenticated && currentView !== 'files' && <Chat />}
+
+            {currentView === 'editor' && aiPanelOpen && (
+              <>
+                {/* Right Resizer - hidden on tablet */}
+                {!isTablet && (
+                  <div
+                    className={`w-1 cursor-col-resize hover:bg-primary transition-colors flex-shrink-0 z-20 ${isDraggingRight ? 'bg-primary' : 'bg-gray-200 dark:bg-gray-800'}`}
+                    onMouseDown={() => setIsDraggingRight(true)}
+                    title="Drag to resize AI Panel"
+                  />
+                )}
+                {isTablet ? (
+                  <MobileBottomSheet
+                    isOpen={aiPanelOpen}
+                    onClose={() => setAiPanelOpen(false)}
+                    title="AI Assistant"
+                    height="60vh"
+                  >
+                    <AIPanel
+                      activeNote={activeNote}
+                      onClose={() => setAiPanelOpen(false)}
+                      width={rightPanelWidth}
+                      editorRef={editorRef}
+                      onImportToEditor={(content, mode) => {
+                        if (editorRef.current) {
+                          if (mode === 'replace' && editorRef.current.replaceContent) {
+                            editorRef.current.replaceContent(content);
+                          } else if (editorRef.current.insertContent) {
+                            editorRef.current.insertContent(content, mode === 'append' ? 'end' : 'cursor');
+                          }
+                        }
+                      }}
+                    />
+                  </MobileBottomSheet>
+                ) : (
+                  <AIPanel
+                    activeNote={activeNote}
+                    onClose={() => setAiPanelOpen(false)}
+                    width={rightPanelWidth}
+                    editorRef={editorRef}
+                    onImportToEditor={(content, mode) => {
+                      if (editorRef.current) {
+                        if (mode === 'replace' && editorRef.current.replaceContent) {
+                          editorRef.current.replaceContent(content);
+                        } else if (editorRef.current.insertContent) {
+                          editorRef.current.insertContent(content, mode === 'append' ? 'end' : 'cursor');
+                        }
+                      }
+                    }}
+                  />
+                )}
+              </>
+            )}
           </>
         )}
 
@@ -1118,6 +1265,33 @@ const App: React.FC = () => {
             Top editor button now exclusively controls showing/hiding the AI panel.
             If you later want to re-enable this shortcut, restore the block here. */}
       </div>
+
+      {/* Mobile: AI Panel as bottom sheet */}
+      {isMobile && currentView === 'editor' && (
+        <MobileBottomSheet
+          isOpen={aiPanelMobileOpen}
+          onClose={() => setAiPanelMobileOpen(false)}
+          title="AI Assistant"
+          height="75vh"
+        >
+          <AIPanel
+            activeNote={activeNote}
+            onClose={() => setAiPanelMobileOpen(false)}
+            width="100%"
+            editorRef={editorRef}
+            onImportToEditor={(content, mode) => {
+              if (editorRef.current) {
+                if (mode === 'replace' && editorRef.current.replaceContent) {
+                  editorRef.current.replaceContent(content);
+                } else if (editorRef.current.insertContent) {
+                  editorRef.current.insertContent(content, mode === 'append' ? 'end' : 'cursor');
+                }
+              }
+              setAiPanelMobileOpen(false);
+            }}
+          />
+        </MobileBottomSheet>
+      )}
     </div>
   );
 };
