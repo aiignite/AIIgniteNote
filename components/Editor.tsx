@@ -26,7 +26,6 @@ interface EditorProps {
 const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onToggleAiPanel, onEditorRefChange }) => {
   const [activeMode, setActiveMode] = useState<NoteType>('Markdown');
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   
   // 导入成功提示状态
   const [importToast, setImportToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({
@@ -230,9 +229,13 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
+    if (savedTimeoutRef.current) {
+      clearTimeout(savedTimeoutRef.current);
+      savedTimeoutRef.current = null;
+    }
     pendingUpdateRef.current = null;
     pendingUpdateNoteIdRef.current = null;
-    setIsSaving(false);
+    setSaveStatus(0);
   }, [note?.id]);
 
   // Sync local title when note changes (e.g., when switching between notes)
@@ -241,6 +244,10 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
       setLocalTitle(note.title);
     }
   }, [note?.id]); // Only sync when note ID changes, not on every render
+
+  // Save status: 0=idle, 1=saving, 2=saved
+  const [saveStatus, setSaveStatus] = useState<0 | 1 | 2>(0);
+  const savedTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Debounced save function
   const debouncedUpdate = useCallback((updates: Partial<Note>) => {
@@ -257,14 +264,14 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
     // Store pending updates
     pendingUpdateRef.current = { ...pendingUpdateRef.current, ...updates };
     pendingUpdateNoteIdRef.current = note.id;
-    setIsSaving(true);
+    // Don't show saving indicator during debounce - only show when actually saving
 
     // Clear existing timer
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
 
-    // Set new timer
+    // Set new timer - 2.5 second debounce to reduce save frequency
     debounceTimerRef.current = setTimeout(() => {
       if (pendingUpdateRef.current && note && pendingUpdateNoteIdRef.current === note.id) {
         console.log('[Editor] Triggering onUpdateNote after debounce:', {
@@ -272,12 +279,24 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
           finalContent: pendingUpdateRef.current.content,
           finalContentLength: pendingUpdateRef.current.content?.length || 0
         });
+        // Show saving indicator
+        setSaveStatus(1);
+        // Make the actual save call
         onUpdateNote({ ...note, ...pendingUpdateRef.current });
         pendingUpdateRef.current = null;
         pendingUpdateNoteIdRef.current = null;
-        setIsSaving(false);
+        // Show saved indicator briefly (1.5s), then return to idle
+        if (savedTimeoutRef.current) {
+          clearTimeout(savedTimeoutRef.current);
+        }
+        savedTimeoutRef.current = setTimeout(() => {
+          setSaveStatus(2);
+          savedTimeoutRef.current = setTimeout(() => {
+            setSaveStatus(0);
+          }, 1500);
+        }, 300);
       }
-    }, 1000); // 1 second debounce
+    }, 5000); // 5 second debounce - reduced save frequency to prevent cursor jumping
   }, [note, onUpdateNote]);
 
   // Immediate save for certain actions (like tag changes)
@@ -606,17 +625,19 @@ const Editor: React.FC<EditorProps> = ({ note, onUpdateNote, aiPanelOpen, onTogg
             </div>
           )}
 
-          {/* Save Status Indicator */}
-          <div className={`flex items-center gap-1.5 text-xs transition-colors ${
-            isSaving ? 'text-yellow-500' : 'text-green-500'
-          }`} title={isSaving ? (t.editor?.saving || 'Saving...') : (t.editor?.saved || 'Saved')}>
-            <span className={`material-symbols-outlined text-[14px] ${isSaving ? 'animate-spin' : ''}`} aria-hidden="false">
-              {isSaving ? 'autorenew' : 'check_circle'}
-            </span>
-            <span className="sr-only">
-              {isSaving ? (t.editor?.saving || 'Saving...') : (t.editor?.saved || 'Saved')}
-            </span>
-          </div>
+          {/* Save Status Indicator - only show when saving or just saved */}
+          {saveStatus > 0 && (
+            <div className={`flex items-center gap-1.5 text-xs transition-colors ${
+              saveStatus === 1 ? 'text-yellow-500' : 'text-green-500'
+            }`} title={saveStatus === 1 ? (t.editor?.saving || 'Saving...') : (t.editor?.saved || 'Saved')}>
+              <span className={`material-symbols-outlined text-[14px] ${saveStatus === 1 ? 'animate-spin' : ''}`} aria-hidden="false">
+                {saveStatus === 1 ? 'autorenew' : 'check_circle'}
+              </span>
+              <span className="sr-only">
+                {saveStatus === 1 ? (t.editor?.saving || 'Saving...') : (t.editor?.saved || 'Saved')}
+              </span>
+            </div>
+          )}
 
           {/* Tag List Display */}
           <div className="hidden md:flex items-center gap-1.5 overflow-x-auto max-w-[200px] scrollbar-hide">

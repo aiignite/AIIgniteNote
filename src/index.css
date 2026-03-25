@@ -125,3 +125,35 @@ body {
 .dark .mind-map-container {
   background-color: rgb(31 41 55);
 }
+
+/* Hide Cherry Markdown bottom status bar (字数, 行号等) */
+.cherry .cherry-info,
+.cherry .cherry-footer,
+.cherry .cherry-status,
+.cherry .CodeMirror-info,
+.cherry .editor-info,
+.cherry-editor-bottom,
+.cherery-editor-bottom,
+.cherry .cherry-previewer-footer,
+.cherry-previewer-footer,
+.cherry .cherry-bottom,
+.cherry-bottom,
+.cherry .cherry-status-bar,
+.cherry-status-bar,
+.cherry-divider {
+  display: none !important;
+}
+
+/* Hide any bottom info bar in Cherry editor */
+.cherry [class*="bottom"],
+.cherry [class*="footer"],
+.cherry [class*="status"] {
+  display: none !important;
+}
+
+/* Hide Editor bottom status bar (字符数, 行数, 阅读时间, AI状态等) */
+[data-mode-switcher] + .border-t,
+.editor-status-bar,
+.h-6.border-t.border-gray-100.dark\:border-gray-800 {
+  display: none !important;
+}

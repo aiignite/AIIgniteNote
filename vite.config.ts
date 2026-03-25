@@ -37,12 +37,18 @@ export default defineConfig(({ mode }) => {
         }
       },
       build: {
+        // 禁用代码分割，确保所有依赖都打包到本地
         rollupOptions: {
           output: {
-            manualChunks: {
-              'react-markdown': ['@uiw/react-md-editor', 'react-markdown'],
-            }
+            // 不分割代码，所有依赖都打包进主 bundle
+            // manualChunks: {
+            //   'react-markdown': ['@uiw/react-md-editor', 'react-markdown'],
+            // }
           }
+        },
+        // 禁止把某些依赖外置到 CDN，强制全部打包
+        commonjsOptions: {
+          include: /node_modules/
         }
       }
     };

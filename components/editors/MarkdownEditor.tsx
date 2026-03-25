@@ -317,7 +317,7 @@ const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>((props
           bubble: ['bold', 'italic', 'underline', 'strikethrough', 'sub', 'sup', '|', 'size', 'color'],
           float: ['h1', 'h2', 'h3', '|', 'checklist', 'quote', 'quickTable', 'code'],
           toc: {
-            position: 'fixed',
+            position: 'relative',
             defaultModel: 'full',
             updateLocationHash: true
           }

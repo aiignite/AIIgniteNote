@@ -72,9 +72,21 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
     const pdf = new jsPDF('p', 'mm', 'a4');
     const imgProps = pdf.getImageProperties(imgData);
     const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    const pdfPageHeight = pdf.internal.pageSize.getHeight();
+    const imgHeightMm = (imgProps.height * pdfWidth) / imgProps.width;
 
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    // Multi-page support: slice image into pages
+    let position = 0;
+    while (position < imgHeightMm) {
+      const remainingHeight = imgHeightMm - position;
+      const pageHeight = Math.min(remainingHeight, pdfPageHeight);
+      pdf.addImage(imgData, 'PNG', 0, -position, pdfWidth, imgHeightMm);
+      position += pdfPageHeight;
+      if (position < imgHeightMm) {
+        pdf.addPage();
+      }
+    }
+
     pdf.save(`${title || 'note'}.pdf`);
   }, []);
 
@@ -171,6 +183,9 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
   useEffect(() => {
     if (!useBlockNote) return;
     const applyExternalValue = async () => {
+      // Skip if user is actively typing (IME composition)
+      if (isComposingRef.current) return;
+      // Skip if content hasn't changed
       if (lastValueRef.current !== null && value === lastValueRef.current) return;
       let blocks: any[] | null = null;
       try {
@@ -187,7 +202,8 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
       isApplyingExternalValueRef.current = true;
       blockNoteEditor.replaceBlocks(blockNoteEditor.document, blocks);
       isApplyingExternalValueRef.current = false;
-      setInternalValue(value);
+      // Only update internal state and lastValueRef, skip triggering React re-render
+      // to prevent cursor jumping in BlockNote
       lastValueRef.current = value;
     };
     applyExternalValue();
@@ -242,6 +258,8 @@ const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>((props
 
   // Sync internal value when prop changes
   useEffect(() => {
+    // Skip during active typing to prevent cursor jumping
+    if (isComposingRef.current) return;
     setInternalValue(value);
   }, [value]);
 
